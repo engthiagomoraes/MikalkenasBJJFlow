@@ -348,24 +348,6 @@ export const Login: React.FC = () => {
                 </button>
               </form>
 
-              {/* Master Admin Fast Login Pill */}
-              <div className="pt-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEmail('thiagomoraes.mail@gmail.com');
-                    setPassword('Pindorama@2507');
-                  }}
-                  className="w-full py-2 px-3 rounded-xl bg-zinc-900/90 hover:bg-zinc-800 border border-zinc-700/80 text-[11px] text-zinc-300 font-semibold transition-all flex items-center justify-between gap-2"
-                >
-                  <span className="flex items-center gap-1.5">
-                    <ShieldCheck className="w-3.5 h-3.5 text-red-500" />
-                    <span>Acesso Rápido Admin Master (Thiago)</span>
-                  </span>
-                  <span className="text-[10px] text-zinc-400 font-mono">Preencher</span>
-                </button>
-              </div>
-
               {/* Action to switch to registration */}
               <div className="pt-4 border-t border-theme flex flex-col items-center gap-3 text-center">
                 <p className="text-xs text-theme-muted">
