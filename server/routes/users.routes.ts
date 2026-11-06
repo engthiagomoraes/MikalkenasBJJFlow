@@ -1,14 +1,20 @@
 import { Router } from 'express';
 import { UsersController } from '../controllers/usersController';
-import { requireAdmin } from '../middleware/authMiddleware';
+import {
+  requireAdmin,
+  requireMasterAdmin
+} from '../middleware/authMiddleware';
 
 const router = Router();
 
-// Todas as operações de gestão de usuários são estritamente restritas a administradores autenticados via Bearer Token
+// Gestão operacional permitida a administradores comuns e master.
 router.get('/', requireAdmin, UsersController.listUsers);
-router.post('/reconcile', requireAdmin, UsersController.reconcileUsers);
 router.post('/:id/approve', requireAdmin, UsersController.approveUser);
 router.post('/:id/reject', requireAdmin, UsersController.rejectUser);
-router.patch('/:id/role', requireAdmin, UsersController.updateRole);
+
+// Mudanças de papel e reconciliação exigem administrador master.
+// A reconciliação pode alterar vínculos de múltiplos usuários.
+router.patch('/:id/role', requireMasterAdmin, UsersController.updateRole);
+router.post('/reconcile', requireMasterAdmin, UsersController.reconcileUsers);
 
 export default router;

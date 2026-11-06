@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { getBackendSupabaseClient } from '../services/supabaseBackend';
 import { verifySessionToken } from '../controllers/authController';
-import { DEFAULT_ADMIN_PERMISSIONS, DEFAULT_PROFESSOR_PERMISSIONS, DEFAULT_STUDENT_PERMISSIONS } from '../controllers/usersController';
 
 export interface AuthenticatedRequest extends Request {
   user?: {
@@ -11,14 +10,14 @@ export interface AuthenticatedRequest extends Request {
     isMasterAdmin: boolean;
     studentId?: string;
     professorId?: string;
-    permissions?: any;
+    permissions?: Record<string, boolean>;
   };
 }
 
 /**
- * Middleware de autenticação estrita via Bearer Token.
- * NUNCA aceita cabeçalhos forjados como x-user-email ou dados enviados no corpo.
- * Sem sessão válida e assinada criptograficamente, retorna HTTP 401.
+ * Valida o token e consulta o perfil atual no banco a cada requisição.
+ * Permissões presentes no token ou enviadas pelo cliente não são usadas
+ * como fonte de autorização.
  */
 export async function authenticateToken(
   req: AuthenticatedRequest,
@@ -28,7 +27,9 @@ export async function authenticateToken(
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Não autorizado. Cabeçalho de autorização Bearer ausente ou inválido.' });
+    res.status(401).json({
+      error: 'Não autorizado. Cabeçalho de autorização Bearer ausente ou inválido.'
+    });
     return;
   }
 
@@ -49,14 +50,16 @@ export async function authenticateToken(
       .maybeSingle();
 
     if (error || !user) {
-      // Se a tabela usuarios não puder ser consultada ou o usuário não constar no registro autorizado,
-      // nega o acesso de forma segura em vez de sintetizar privilégios por e-mail.
-      res.status(401).json({ error: 'Sessão revogada ou perfil autorizado indisponível no banco de dados.' });
+      res.status(401).json({
+        error: 'Sessão revogada ou perfil autorizado indisponível no banco de dados.'
+      });
       return;
     }
 
     if (user.status !== 'aprovado' && user.status !== 'ativo') {
-      res.status(403).json({ error: 'Acesso bloqueado. Conta do usuário não possui aprovação ativa.' });
+      res.status(403).json({
+        error: 'Acesso bloqueado. Conta do usuário não possui aprovação ativa.'
+      });
       return;
     }
 
@@ -64,50 +67,68 @@ export async function authenticateToken(
       id: user.id,
       email: user.email,
       role: user.role,
-      isMasterAdmin: Boolean(user.is_master_admin || user.role === 'admin'),
-      studentId: user.student_id,
-      professorId: user.professor_id,
-      permissions: user.permissions
+      isMasterAdmin: user.role === 'admin' && user.is_master_admin === true,
+      studentId: user.student_id ?? undefined,
+      professorId: user.professor_id ?? undefined,
+      permissions: user.permissions ?? undefined
     };
 
     next();
-  } catch (err: any) {
-    res.status(500).json({ error: 'Erro interno ao validar autorização no servidor.', details: err?.message });
+  } catch {
+    res.status(500).json({ error: 'Erro interno ao validar autorização no servidor.' });
   }
 }
 
-/**
- * Middleware para exigir perfil Administrador no servidor
- */
+/** Exige um administrador autenticado, master ou não. */
 export async function requireAdmin(
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
 ): Promise<void> {
   await authenticateToken(req, res, () => {
-    if (!req.user || (req.user.role !== 'admin' && !req.user.isMasterAdmin)) {
-      res.status(403).json({ error: 'Acesso negado. Esta operação exige privilégios de Administrador.' });
+    if (req.user?.role !== 'admin') {
+      res.status(403).json({
+        error: 'Acesso negado. Esta operação exige privilégios de Administrador.'
+      });
       return;
     }
+
     next();
   });
 }
 
-/**
- * Middleware para exigir perfil Professor ou Administrador
- */
+/** Exige explicitamente o privilégio master registrado no banco. */
+export async function requireMasterAdmin(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  await authenticateToken(req, res, () => {
+    if (req.user?.role !== 'admin' || req.user.isMasterAdmin !== true) {
+      res.status(403).json({
+        error: 'Acesso negado. Esta operação exige privilégios de Administrador master.'
+      });
+      return;
+    }
+
+    next();
+  });
+}
+
+/** Exige professor ou administrador autenticado. */
 export async function requireInstructorOrAdmin(
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
 ): Promise<void> {
   await authenticateToken(req, res, () => {
-    if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'professor' && !req.user.isMasterAdmin)) {
-      res.status(403).json({ error: 'Acesso negado. Esta operação exige privilégios de Professor ou Administrador.' });
+    if (req.user?.role !== 'admin' && req.user?.role !== 'professor') {
+      res.status(403).json({
+        error: 'Acesso negado. Esta operação exige privilégios de Professor ou Administrador.'
+      });
       return;
     }
+
     next();
   });
 }
-
-

@@ -117,9 +117,9 @@ export class AuthController {
       const client = getBackendSupabaseClient();
       const cleanEmail = String(email).toLowerCase().trim();
 
-      const { data: user, error } = await client
+      let { data: user, error } = await client
         .from('usuarios')
-        .select('id, nome, email, password, role, is_master_admin, status, professor_id, student_id, faixa, graus, permissions, telefone, created_at')
+        .select('*')
         .ilike('email', cleanEmail)
         .maybeSingle();
 
@@ -349,7 +349,7 @@ export class AuthController {
 
       const { data: user, error } = await client
         .from('usuarios')
-        .select('id, nome, email, role, is_master_admin, status, professor_id, student_id, faixa, graus, permissions, telefone, created_at')
+        .select('*')
         .eq('id', req.user.id)
         .maybeSingle();
 
