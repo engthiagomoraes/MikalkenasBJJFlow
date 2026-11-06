@@ -1,0 +1,356 @@
+@import "tailwindcss";
+
+/* ==========================================================================
+   TERNATIO BJJ • DESIGN SYSTEM & THEMES
+   Based on the official marketing campaign & brand guidelines:
+   1. Onyx Tatame (Escuro / Stealth)
+   2. Kimono White (Claro / Pure Dojo)
+   3. Imperial Navy & Gold (Colorido / Premium Identity)
+   ========================================================================== */
+
+:root,
+[data-theme="dark"] {
+  --theme-bg-app: #09090b;
+  --theme-bg-sidebar: #0f0f12;
+  --theme-bg-header: #0f0f12;
+  --theme-bg-card: #141418;
+  --theme-bg-card-hover: #1c1c22;
+  --theme-bg-subtle: #18181f;
+  --theme-bg-input: #0c0c0f;
+  
+  --theme-border: #22222a;
+  --theme-border-subtle: #17171d;
+  --theme-border-active: #dc2626;
+
+  --theme-text-main: #f4f4f5;
+  --theme-text-muted: #a1a1aa;
+  --theme-text-dim: #71717a;
+
+  --theme-accent: #dc2626;
+  --theme-accent-hover: #b91c1c;
+  --theme-accent-text: #ffffff;
+  --theme-accent-subtle: rgba(220, 38, 38, 0.12);
+
+  --theme-gold: #e4a834;
+  --theme-gold-subtle: rgba(228, 168, 52, 0.15);
+
+  --theme-badge-bg: #1f1f26;
+  --theme-badge-text: #e4e4e7;
+  
+  --theme-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.7), 0 8px 10px -6px rgba(0, 0, 0, 0.6);
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --theme-bg-app: #F8FAFC;
+  --theme-bg-sidebar: #FFFFFF;
+  --theme-bg-header: #FFFFFF;
+  --theme-bg-card: #FFFFFF;
+  --theme-bg-card-hover: #F1F5F9;
+  --theme-bg-subtle: #F1F5F9;
+  --theme-bg-input: #FFFFFF;
+
+  --theme-border: #E2E8F0;
+  --theme-border-subtle: #F1F5F9;
+  --theme-border-active: #1E3A8A;
+
+  --theme-text-main: #0F172A;
+  --theme-text-muted: #334155;
+  --theme-text-dim: #64748B;
+
+  --theme-accent: #1E3A8A;
+  --theme-accent-hover: #1D4ED8;
+  --theme-accent-text: #FFFFFF;
+  --theme-accent-subtle: rgba(30, 58, 138, 0.08);
+
+  --theme-gold: #B48827;
+  --theme-gold-subtle: rgba(180, 136, 39, 0.1);
+
+  --theme-badge-bg: #E2E8F0;
+  --theme-badge-text: #0F172A;
+
+  --theme-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+  color-scheme: light;
+}
+
+[data-theme="colorful"],
+[data-theme="padrao"] {
+  /* ==========================================================================
+     TEMA PADRÃO • PALETA SUAVE EM TONS PASTÉIS (PASTEL DOJO)
+     Equilíbrio com tons pastéis suaves (índigo suave, lavanda, menta e pêssego)
+     ========================================================================== */
+  --theme-bg-app: #F4F6FB;
+  --theme-bg-sidebar: #E9EEF7;
+  --theme-bg-header: #E9EEF7;
+  --theme-bg-card: #FFFFFF;
+  --theme-bg-card-hover: #F8FAFD;
+  --theme-bg-subtle: #DFE7F2;
+  --theme-bg-input: #FFFFFF;
+
+  --theme-border: #D1DCEB;
+  --theme-border-subtle: #E2ECF7;
+  --theme-border-active: #6366F1;
+
+  --theme-text-main: #1E293B;
+  --theme-text-muted: #475569;
+  --theme-text-dim: #64748B;
+
+  --theme-accent: #6366F1;
+  --theme-accent-hover: #4F46E5;
+  --theme-accent-text: #FFFFFF;
+  --theme-accent-subtle: rgba(99, 102, 241, 0.12);
+
+  --theme-gold: #D97706;
+  --theme-gold-subtle: rgba(217, 119, 6, 0.12);
+
+  --theme-badge-bg: #E0E7FF;
+  --theme-badge-text: #3730A3;
+
+  --theme-shadow: 0 4px 14px rgba(30, 41, 59, 0.05);
+  color-scheme: light;
+}
+
+/* Base Body Styles */
+body {
+  background-color: var(--theme-bg-app);
+  color: var(--theme-text-main);
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease;
+  min-height: 100vh;
+}
+
+.ternatio-page-watermark-logo svg {
+  width: min(85vw, 85vh) !important;
+  height: min(85vw, 85vh) !important;
+  max-width: none !important;
+  max-height: none !important;
+}
+
+/* ==========================================================================
+   TEMA CLARO & PADRÃO: TEXTOS DO MENU LATERAL NÍTIDOS E ESCUROS
+   Garante contraste excelente nos textos do menu lateral em fundos claros
+   ========================================================================== */
+[data-theme="light"] aside,
+[data-theme="colorful"] aside,
+[data-theme="padrao"] aside {
+  color: #0F172A !important;
+}
+
+[data-theme="light"] aside button,
+[data-theme="colorful"] aside button,
+[data-theme="padrao"] aside button,
+[data-theme="light"] aside a:not(.bg-blue-600),
+[data-theme="colorful"] aside a:not(.bg-blue-600),
+[data-theme="padrao"] aside a:not(.bg-blue-600) {
+  color: #1E293B !important;
+}
+
+[data-theme="light"] aside a:not(.bg-blue-600):hover,
+[data-theme="colorful"] aside a:not(.bg-blue-600):hover,
+[data-theme="padrao"] aside a:not(.bg-blue-600):hover {
+  background-color: #E2E8F0 !important;
+  color: #0F172A !important;
+}
+
+[data-theme="light"] aside .text-theme-muted,
+[data-theme="light"] aside .text-slate-400,
+[data-theme="light"] aside .text-slate-300,
+[data-theme="light"] aside .text-slate-200,
+[data-theme="colorful"] aside .text-theme-muted,
+[data-theme="colorful"] aside .text-slate-400,
+[data-theme="colorful"] aside .text-slate-300,
+[data-theme="colorful"] aside .text-slate-200,
+[data-theme="padrao"] aside .text-theme-muted,
+[data-theme="padrao"] aside .text-slate-400,
+[data-theme="padrao"] aside .text-slate-300,
+[data-theme="padrao"] aside .text-slate-200 {
+  color: #334155 !important;
+}
+
+[data-theme="light"] aside .text-white,
+[data-theme="colorful"] aside .text-white,
+[data-theme="padrao"] aside .text-white {
+  color: #0F172A !important;
+}
+
+/* ==========================================================================
+   TEMA ESCURO: CORREÇÃO COMPLETA DE FORMULÁRIOS, INPUTS E MODAIS
+   Garante fundo escuro profundo nos formulários, selects, inputs e caixas
+   ========================================================================== */
+[data-theme="dark"] form,
+[data-theme="dark"] .bg-white,
+[data-theme="dark"] .bg-slate-50,
+[data-theme="dark"] .bg-gray-50 {
+  background-color: var(--theme-bg-card) !important;
+  color: var(--theme-text-main) !important;
+  border-color: var(--theme-border) !important;
+}
+
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]),
+[data-theme="dark"] select,
+[data-theme="dark"] textarea {
+  background-color: var(--theme-bg-input) !important;
+  color: #F8FAFC !important;
+  border-color: var(--theme-border) !important;
+}
+
+[data-theme="dark"] input:focus,
+[data-theme="dark"] select:focus,
+[data-theme="dark"] textarea:focus {
+  background-color: #0F1728 !important;
+  border-color: #3B82F6 !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25) !important;
+  outline: none !important;
+}
+
+[data-theme="dark"] option {
+  background-color: #121927 !important;
+  color: #F8FAFC !important;
+}
+
+[data-theme="dark"] label {
+  color: #CBD5E1 !important;
+}
+
+[data-theme="dark"] .text-slate-900 {
+  color: #F8FAFC !important;
+}
+
+[data-theme="dark"] .text-slate-800,
+[data-theme="dark"] .text-slate-700 {
+  color: #E2E8F0 !important;
+}
+
+[data-theme="dark"] .text-slate-600,
+[data-theme="dark"] .text-slate-500 {
+  color: #94A3B8 !important;
+}
+
+[data-theme="dark"] .border-slate-100,
+[data-theme="dark"] .border-slate-200,
+[data-theme="dark"] .border-slate-300 {
+  border-color: var(--theme-border) !important;
+}
+
+[data-theme="dark"] .bg-slate-100,
+[data-theme="dark"] .bg-slate-200 {
+  background-color: var(--theme-bg-subtle) !important;
+  color: #F8FAFC !important;
+}
+
+[data-theme="dark"] .bg-blue-50 {
+  background-color: rgba(59, 130, 246, 0.15) !important;
+  color: #93C5FD !important;
+}
+
+[data-theme="dark"] .bg-indigo-50 {
+  background-color: rgba(99, 102, 241, 0.15) !important;
+  color: #C7D2FE !important;
+}
+
+[data-theme="dark"] .bg-amber-50 {
+  background-color: rgba(245, 158, 11, 0.15) !important;
+  color: #FDE68A !important;
+}
+
+[data-theme="dark"] .bg-emerald-50 {
+  background-color: rgba(16, 185, 129, 0.15) !important;
+  color: #A7F3D0 !important;
+}
+
+[data-theme="dark"] .bg-purple-50 {
+  background-color: rgba(168, 85, 247, 0.15) !important;
+  color: #E9D5FF !important;
+}
+
+/* Custom Semantic Theme Classes */
+.bg-theme-app {
+  background-color: var(--theme-bg-app);
+}
+
+.bg-theme-sidebar {
+  background-color: var(--theme-bg-sidebar);
+}
+
+.bg-theme-header {
+  background-color: var(--theme-bg-header);
+}
+
+.bg-theme-card {
+  background-color: var(--theme-bg-card);
+}
+
+.bg-theme-card-hover:hover {
+  background-color: var(--theme-bg-card-hover);
+}
+
+.bg-theme-subtle {
+  background-color: var(--theme-bg-subtle);
+}
+
+.bg-theme-input {
+  background-color: var(--theme-bg-input);
+}
+
+.border-theme {
+  border-color: var(--theme-border);
+}
+
+.border-theme-subtle {
+  border-color: var(--theme-border-subtle);
+}
+
+.divide-theme-border > :not(:first-child) {
+  border-color: var(--theme-border);
+}
+
+.border-theme-active {
+  border-color: var(--theme-border-active);
+}
+
+.text-theme-main {
+  color: var(--theme-text-main);
+}
+
+.text-theme-muted {
+  color: var(--theme-text-muted);
+}
+
+.text-theme-dim {
+  color: var(--theme-text-dim);
+}
+
+.text-theme-accent {
+  color: var(--theme-accent);
+}
+
+.text-theme-gold {
+  color: var(--theme-gold);
+}
+
+.bg-theme-accent {
+  background-color: var(--theme-accent);
+  color: var(--theme-accent-text);
+}
+
+.bg-theme-accent:hover {
+  background-color: var(--theme-accent-hover);
+}
+
+.bg-theme-accent-subtle {
+  background-color: var(--theme-accent-subtle);
+}
+
+/* Tatame Grid Texture Pattern */
+.bg-tatame-pattern {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+[data-theme="light"] .bg-tatame-pattern {
+  background-image: radial-gradient(rgba(15, 23, 42, 0.05) 1px, transparent 1px);
+}
+
+[data-theme="colorful"] .bg-tatame-pattern {
+  background-image: radial-gradient(rgba(197, 160, 89, 0.08) 1px, transparent 1px);
+}

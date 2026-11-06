@@ -1,0 +1,17 @@
+students_csv = """data_inicio,nome_responsavel,telefone,ativo,data_ultima_graduacao,data_proxima_graduacao,nome,menor_de_16,plano_contratado,data_aniversario,desconto_porcentagem,professor_responsavel,faixa,email,id,created_date,updated_date,created_by_id,created_by,is_sample
+"2026-05-30","Jeferson","","true","","","Enzo","true","projeto social","","0","6a302755f6151bc2fa418de0","Branca","","6a30227dacccaf9cc51482cd","2026-06-15T16:04:13.841000","2026-06-15T16:27:50.322000","68f68e0793547539dd457517","treinamentosequalidade@gmail.com","false"
+"","Jussara Dias","917972954","false","","2026-12-31","Erick Dias Brito","true","","","","","Branca","jussaradiaspaz@gmail.com","69c188b4ef911e5e175d922e","2026-03-23T18:38:44.143000","2026-06-15T16:14:46.663000","68f68e0793547539dd457517","treinamentosequalidade@gmail.com","false"
+"","","11968659628","true","","2026-12-31","Jonathan Ribeiro","false","padrão","1996-03-31","0","6a302755f6151bc2fa418de0","Branca","jonathan.rib.almeida@gmail.com","69c187d7eb47cb038a64d4d0","2026-03-23T18:35:03.356000","2026-06-20T12:22:14.686000","68f68e0793547539dd457517","treinamentosequalidade@gmail.com","false"
+"","Jeferson","","true","","2027-06-01","Luca","true","projeto social","","0","6a302755f6151bc2fa418de0","Branca","","69b59aa4d3902ead7c2612fd","2026-03-14T17:28:04.715000","2026-06-15T16:28:26.119000","68f68e0793547539dd457517","treinamentosequalidade@gmail.com","false"
+"","","","false","","2026-06-12","Heitor","false","","","","","Amarela","","69923205bb1beebfa451eb72","2026-02-15T20:52:21.062000","2026-06-15T16:14:33.227000","68f68e0793547539dd457517","treinamentosequalidade@gmail.com","false"
+"","","","false","","","Rafaela","true","padrão","","0","6a30278a8f0e88e43fc5bd41","Branca","","699231c36c90200fa83c8578","2026-02-15T20:51:15.704000","2026-06-15T16:28:44.162000","68f68e0793547539dd457517","treinamentosequalidade@gmail.com","false"
+"","","","false","","","Nathalie","false","projeto social","","0","6a30278a8f0e88e43fc5bd41","Branca","","698780ef0663cdb43d0d7963","2026-02-07T18:14:07.556000","2026-06-15T16:32:55.692000","68f68e0793547539dd457517","treinamentosequalidade@gmail.com","false"
+"","Daniela","","true","","2026-12-01","Breno","true","projeto social","","0","6a302755f6151bc2fa418de0","Branca","","68fd0955de4e44d137a8a2c0","2025-10-25T17:31:01.758000","2026-06-15T16:30:19.795000","68f68e0793547539dd457517","treinamentosequalidade@gmail.com","false"
+"","Thiago Lopes de Moraes Silva","","true","","2025-12-07","Julia Lopes de Moraes","true","projeto social","","0","6a30278a8f0e88e43fc5bd41","Verde","","68fd093257d92252431ccc5b","2025-10-25T17:30:26.128000","2026-06-15T16:29:00.981000","68f68e0793547539dd457517","treinamentosequalidade@gmail.com","false"
+"","","","false","","2026-06-27","Augusto","false","padrão","","0","6a30278a8f0e88e43fc5bd41","Azul","","68fd090b94a9ff66f66c7093","2025-10-25T17:29:47.583000","2026-06-15T16:32:46.180000","68f68e0793547539dd457517","treinamentosequalidade@gmail.com","false"
+"","","11942492669","true","2026-06-05","2027-12-05","Murilo Fernandes da Silva","false","bolsa","2004-09-10","40","6a302755f6151bc2fa418de0","Roxa","murilofernandes801@gmail.com","68f7dd1df8a8c1b4a9813794","2025-10-21T19:21:01.457000","2026-06-20T12:19:39.394000","68f68e0793547539dd457517","treinamentosequalidade@gmail.com","false"
+"""
+
+with open('/tmp/students.csv', 'w') as f:
+    f.write(students_csv)
+print("Students saved")

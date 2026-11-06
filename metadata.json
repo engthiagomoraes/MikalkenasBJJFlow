@@ -1,0 +1,6 @@
+{
+  "name": "BJJ Flow - Gestão de Academia e Aulas de Jiu-Jitsu",
+  "description": "Sistema completo para academias de Jiu-Jitsu: controle de presença, planejamento de aulas, biblioteca técnica, graduação por faixas/graus, financeiro por modalidade (regular, infantil, bolsista, social) e notificações de treinos e vencimentos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
