@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   ClipboardCheck, 
@@ -18,7 +18,12 @@ import {
   Sparkles,
   UserRound,
   ChevronRight,
-  Info
+  ChevronDown,
+  Info,
+  CalendarDays,
+  History,
+  TrendingUp,
+  BarChart3
 } from 'lucide-react';
 import { useBjj } from '../context/BjjContext';
 import { BeltBadge } from '../components/ui/BeltBadge';
@@ -62,25 +67,67 @@ export const Presenca: React.FC = () => {
     : attendance;
 
   const todayStr = new Date().toISOString().split('T')[0];
+  const firstDayOfMonthStr = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
+
+  // Alternador entre "Presença do Dia" e "Consulta por Período"
+  const [viewMode, setViewMode] = useState<'daily' | 'period'>('daily');
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
+  const [startDate, setStartDate] = useState<string>(firstDayOfMonthStr);
+  const [endDate, setEndDate] = useState<string>(todayStr);
   const [selectedTurma, setSelectedTurma] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [showManualModal, setShowManualModal] = useState<boolean>(false);
   const [showQrSimulator, setShowQrSimulator] = useState<boolean>(false);
   const [lastCheckinFeedback, setLastCheckinFeedback] = useState<string | null>(null);
+  const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
 
   // Manual modal state
   const [manualStudentId, setManualStudentId] = useState<string>(scopedStudents[0]?.id || students[0]?.id || '');
   const [manualTurmaId, setManualTurmaId] = useState<string>(scopedClasses[0]?.id || classes[0]?.id || '');
   const [manualTime, setManualTime] = useState<string>('19:30');
 
-  // Filtered attendance for selected date
+  // Filtro de presenças para o dia selecionado
   const filteredAttendance = scopedAttendance.filter(item => {
     const matchesDate = item.data === selectedDate;
     const matchesTurma = selectedTurma === 'all' || item.turmaId === selectedTurma;
     const matchesSearch = item.studentNome.toLowerCase().includes(searchQuery.toLowerCase());
     return matchesDate && matchesTurma && matchesSearch;
   });
+
+  // Filtro de presenças no intervalo/período selecionado
+  const periodAttendance = useMemo(() => {
+    return scopedAttendance.filter(item => {
+      const inDateRange = (!startDate || item.data >= startDate) && (!endDate || item.data <= endDate);
+      const matchesTurma = selectedTurma === 'all' || item.turmaId === selectedTurma;
+      const matchesSearch = item.studentNome.toLowerCase().includes(searchQuery.toLowerCase());
+      return inDateRange && matchesTurma && matchesSearch;
+    });
+  }, [scopedAttendance, startDate, endDate, selectedTurma, searchQuery]);
+
+  // Agrupamento de presenças por aluno no período
+  const studentPeriodStats = useMemo(() => {
+    return scopedStudents
+      .filter(s => {
+        const matchesSearch = s.nome.toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesTurma = selectedTurma === 'all' || s.turmaPreferida === selectedTurma || classes.find(c => c.id === selectedTurma)?.titulo === s.turmaPreferida;
+        return matchesSearch && matchesTurma;
+      })
+      .map(student => {
+        const studentRecords = periodAttendance.filter(a => a.studentId === student.id);
+        return {
+          student,
+          total: studentRecords.length,
+          records: studentRecords.sort((a, b) => b.data.localeCompare(a.data))
+        };
+      })
+      .sort((a, b) => b.total - a.total);
+  }, [scopedStudents, periodAttendance, searchQuery, selectedTurma, classes]);
+
+  // Métricas do período
+  const totalPeriodCheckins = periodAttendance.length;
+  const activeStudentsInPeriod = studentPeriodStats.filter(s => s.total > 0).length;
+  const avgAttendance = activeStudentsInPeriod > 0 ? (totalPeriodCheckins / activeStudentsInPeriod).toFixed(1) : '0';
+  const topStudent = studentPeriodStats[0]?.total > 0 ? studentPeriodStats[0].student.nome : null;
 
   // Find lesson plan for selected date (and turma)
   const currentLessonPlan = lessonPlans.find(lp => {
@@ -260,237 +307,652 @@ export const Presenca: React.FC = () => {
         </div>
       </div>
 
-      {/* Pedagogical Callout / Techniques Planned for Selected Day */}
-      <div className="bg-gradient-to-r from-indigo-900 via-slate-900 to-blue-950 text-white rounded-2xl p-5 shadow-sm border border-slate-800">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-2 text-xs font-bold text-amber-400 uppercase tracking-wider">
-              <Sparkles className="w-4 h-4" />
-              Técnicas Planejadas para esta Aula (Histórico do Aluno)
-            </div>
+      {/* Navigation Tabs: Presença do Dia vs Consulta por Período */}
+      <div className="flex items-center gap-2 border-b border-theme pb-2 no-print">
+        <button
+          type="button"
+          onClick={() => setViewMode('daily')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            viewMode === 'daily'
+              ? 'bg-amber-500 text-slate-950 shadow-md'
+              : 'bg-theme-card text-theme-muted hover:text-theme-main border border-theme'
+          }`}
+        >
+          <Calendar className="w-4 h-4" />
+          <span>Presença do Dia</span>
+        </button>
 
-            {currentLessonPlan ? (
-              <div>
-                <h3 className="text-base font-extrabold text-white flex items-center gap-2">
-                  <BookOpen className="w-4 h-4 text-blue-400" />
-                  {currentLessonPlan.temaPrincipal}
-                </h3>
-                <p className="text-xs text-slate-300 mt-0.5">
-                  Aula programada por: <strong>{currentLessonPlan.professor}</strong> • Turma: <strong>{currentLessonPlan.turma}</strong>
-                </p>
-              </div>
-            ) : (
-              <div>
-                <h3 className="text-sm font-bold text-slate-200">
-                  Nenhum plano cadastrado especificamente para {new Date(selectedDate + 'T00:00:00').toLocaleDateString('pt-BR')}
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Cadastre o plano de aula indicando as técnicas a serem ensinadas para que fiquem registradas no histórico do praticante.
-                </p>
-              </div>
-            )}
-          </div>
+        <button
+          type="button"
+          onClick={() => setViewMode('period')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            viewMode === 'period'
+              ? 'bg-amber-500 text-slate-950 shadow-md'
+              : 'bg-theme-card text-theme-muted hover:text-theme-main border border-theme'
+          }`}
+        >
+          <BarChart3 className="w-4 h-4" />
+          <span>Consulta por Período ({totalPeriodCheckins} registros)</span>
+        </button>
+      </div>
 
-          {currentLessonPlan ? (
-            <div className="flex items-center gap-2 flex-wrap md:justify-end">
-              {plannedTechniquesList.map(t => (
-                <span
-                  key={t.id}
-                  className="bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-bold px-3 py-1.5 rounded-xl backdrop-blur-xs flex items-center gap-1.5 transition-colors"
+      {/* VIEW MODE 1: PRESENÇA DO DIA */}
+      {viewMode === 'daily' && (
+        <div className="space-y-6">
+          {/* Pedagogical Callout / Techniques Planned for Selected Day */}
+          <div className="bg-gradient-to-r from-neutral-900 via-zinc-900 to-stone-900 text-white rounded-2xl p-5 shadow-sm border border-neutral-800">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2 text-xs font-bold text-amber-400 uppercase tracking-wider">
+                  <Sparkles className="w-4 h-4" />
+                  Técnicas Planejadas para esta Aula (Histórico do Aluno)
+                </div>
+
+                {currentLessonPlan ? (
+                  <div>
+                    <h3 className="text-base font-extrabold text-white flex items-center gap-2">
+                      <BookOpen className="w-4 h-4 text-blue-400" />
+                      {currentLessonPlan.temaPrincipal}
+                    </h3>
+                    <p className="text-xs text-slate-300 mt-0.5">
+                      Aula programada por: <strong>{currentLessonPlan.professor}</strong> • Turma: <strong>{currentLessonPlan.turma}</strong>
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-200">
+                      Nenhum plano cadastrado especificamente para {new Date(selectedDate + 'T00:00:00').toLocaleDateString('pt-BR')}
+                    </h3>
+                    <p className="text-xs text-slate-400">
+                      Cadastre o plano de aula indicando as técnicas a serem ensinadas para que fiquem registradas no histórico do praticante.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {currentLessonPlan ? (
+                <div className="flex items-center gap-2 flex-wrap md:justify-end">
+                  {plannedTechniquesList.map(t => (
+                    <span
+                      key={t.id}
+                      className="bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-bold px-3 py-1.5 rounded-xl backdrop-blur-xs flex items-center gap-1.5 transition-colors"
+                    >
+                      <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                      {t.titulo}
+                    </span>
+                  ))}
+                  <Link
+                    to="/planejamento"
+                    className="text-xs text-blue-300 hover:text-white underline font-semibold ml-2"
+                  >
+                    Ver Plano Completo →
+                  </Link>
+                </div>
+              ) : (
+                <Link
+                  to="/planejamento"
+                  className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-4 py-2 rounded-xl shrink-0 transition-colors shadow-xs"
                 >
-                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                  {t.titulo}
-                </span>
-              ))}
-              <Link
-                to="/planejamento"
-                className="text-xs text-blue-300 hover:text-white underline font-semibold ml-2"
-              >
-                Ver Plano Completo →
-              </Link>
-            </div>
-          ) : (
-            <Link
-              to="/planejamento"
-              className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-4 py-2 rounded-xl shrink-0 transition-colors shadow-xs"
-            >
-              + Planejar Técnicas de Hoje
-            </Link>
-          )}
-        </div>
-
-        <div className="mt-3 pt-3 border-t border-white/10 flex items-center gap-2 text-[11px] text-blue-200">
-          <Info className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-          <span>
-            <strong>Regra Curricular Ativa:</strong> Todo aluno que tiver a presença confirmada nesta data terá as posições acima gravadas automaticamente como <strong>técnica aprendida</strong> em seu desenvolvimento individual.
-          </span>
-        </div>
-      </div>
-
-      {/* Filter and Date Bar */}
-      <div className="bg-white rounded-2xl p-4 md:p-5 border border-slate-200/80 shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 no-print">
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1">
-          {/* Date Picker */}
-          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-700">
-            <Calendar className="w-4 h-4 text-slate-400" />
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="bg-transparent text-xs font-semibold focus:outline-none"
-            />
-          </div>
-
-          {/* Turma filter */}
-          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-700">
-            <Filter className="w-4 h-4 text-slate-400" />
-            <select
-              value={selectedTurma}
-              onChange={(e) => setSelectedTurma(e.target.value)}
-              className="bg-transparent text-xs font-semibold focus:outline-none"
-            >
-              <option value="all">Todas as Turmas do Dia</option>
-              {scopedClasses.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.titulo}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Search box */}
-          <div className="relative flex-1 min-w-[200px]">
-            <input
-              type="text"
-              placeholder="Buscar aluno na lista..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 pl-9 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between sm:justify-end gap-3 text-xs text-slate-500 border-t md:border-t-0 pt-2 md:pt-0">
-          <span>Total no dia:</span>
-          <span className="font-extrabold text-sm text-slate-900 bg-slate-100 px-3 py-1 rounded-lg">
-            {filteredAttendance.length} presentes
-          </span>
-        </div>
-      </div>
-
-      {/* Main Content: Fast Roster Check-in or Attendance list */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left 2 Cols: Registered Attendances for the selected date */}
-        <div className="lg:col-span-2 space-y-4">
-          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
-            <div className="p-4 md:p-5 border-b border-slate-100 flex items-center justify-between">
-              <div>
-                <h3 className="font-bold text-slate-900 text-sm">
-                  Lista de Presenças Registradas ({filteredAttendance.length})
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Data: {new Date(selectedDate + 'T00:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
-                </p>
-              </div>
-
-              {isProfessor && (
-                <span className="text-[11px] font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200">
-                  Prof. {currentUser.nome}
-                </span>
+                  + Planejar Técnicas de Hoje
+                </Link>
               )}
             </div>
 
-            {filteredAttendance.length === 0 ? (
-              <div className="p-12 text-center space-y-3">
-                <div className="w-12 h-12 rounded-full bg-slate-100 text-slate-400 mx-auto flex items-center justify-center">
-                  <ClipboardCheck className="w-6 h-6" />
-                </div>
-                <h4 className="text-sm font-semibold text-slate-700">Nenhuma presença nesta data</h4>
-                <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                  {!isAluno 
-                    ? 'Utilize o painel ao lado para registrar a chamada dos alunos presentes ou clique no botão "Totem / QR Code".'
-                    : 'Nenhuma presença registrada para você nesta data selecionada.'}
-                </p>
+            <div className="mt-3 pt-3 border-t border-white/10 flex items-center gap-2 text-[11px] text-blue-200">
+              <Info className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+              <span>
+                <strong>Regra Curricular Ativa:</strong> Todo aluno que tiver a presença confirmada nesta data terá as posições acima gravadas automaticamente como <strong>técnica aprendida</strong> em seu desenvolvimento individual.
+              </span>
+            </div>
+          </div>
+
+          {/* Filter and Date Bar (Daily) */}
+          <div className="bg-theme-card rounded-2xl p-4 md:p-5 border border-theme shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4 no-print">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1">
+              {/* Date Picker */}
+              <div className="flex items-center gap-2 bg-theme-app border border-theme rounded-xl px-3 py-2 text-theme-main">
+                <Calendar className="w-4 h-4 text-theme-muted" />
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => setSelectedDate(e.target.value)}
+                  className="bg-transparent text-xs font-semibold focus:outline-none text-theme-main cursor-pointer"
+                />
               </div>
-            ) : (
-              <div className="divide-y divide-slate-100">
-                {filteredAttendance.map(item => {
-                  const student = students.find(s => s.id === item.studentId);
-                  const progressPct = student 
-                    ? Math.min(100, Math.round((student.presencasNaFaixa / student.presencasMetaGrau) * 100))
-                    : 50;
 
-                  // Find techniques student learned on this date
-                  const studentLearnedOnDate = student?.tecnicasAprendidas?.filter(t => t.dataAprendida === item.data) || [];
+              {/* Turma filter */}
+              <div className="flex items-center gap-2 bg-theme-app border border-theme rounded-xl px-3 py-2 text-theme-main">
+                <Filter className="w-4 h-4 text-theme-muted" />
+                <select
+                  value={selectedTurma}
+                  onChange={(e) => setSelectedTurma(e.target.value)}
+                  className="bg-transparent text-xs font-semibold focus:outline-none text-theme-main cursor-pointer"
+                >
+                  <option value="all">Todas as Turmas do Dia</option>
+                  {scopedClasses.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.titulo}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-                  return (
-                    <div 
-                      key={item.id}
-                      className="p-4 hover:bg-slate-50/70 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-slate-800 text-white font-bold text-xs flex items-center justify-center shrink-0">
-                          {item.studentNome.charAt(0)}
-                        </div>
+              {/* Search box */}
+              <div className="relative flex-1 min-w-[200px]">
+                <input
+                  type="text"
+                  placeholder="Buscar aluno na chamada do dia..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full text-xs bg-theme-app border border-theme rounded-xl px-3.5 py-2 pl-9 focus:outline-none focus:ring-2 focus:ring-amber-500 text-theme-main"
+                />
+                <Search className="w-3.5 h-3.5 text-theme-muted absolute left-3 top-2.5" />
+              </div>
+            </div>
 
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-bold text-sm text-slate-900">{item.studentNome}</span>
-                            <BeltBadge faixa={item.studentFaixa} graus={item.studentGraus} size="sm" />
+            <div className="flex items-center justify-between sm:justify-end gap-3 text-xs text-theme-muted border-t md:border-t-0 pt-2 md:pt-0">
+              <span>Total no dia:</span>
+              <span className="font-extrabold text-sm text-theme-main bg-theme-app border border-theme px-3 py-1 rounded-lg">
+                {filteredAttendance.length} presentes
+              </span>
+            </div>
+          </div>
+
+          {/* Main Content: Fast Roster Check-in or Attendance list */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left 2 Cols: Registered Attendances for the selected date */}
+            <div className="lg:col-span-2 space-y-4">
+              <div className="bg-theme-card rounded-2xl border border-theme shadow-xs overflow-hidden">
+                <div className="p-4 md:p-5 border-b border-theme flex items-center justify-between">
+                  <div>
+                    <h3 className="font-bold text-theme-main text-sm">
+                      Lista de Presenças Registradas ({filteredAttendance.length})
+                    </h3>
+                    <p className="text-xs text-theme-muted">
+                      Data: {new Date(selectedDate + 'T00:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                    </p>
+                  </div>
+
+                  {isProfessor && (
+                    <span className="text-[11px] font-bold text-blue-500 bg-blue-500/10 px-2.5 py-1 rounded-lg border border-blue-500/30">
+                      Prof. {currentUser.nome}
+                    </span>
+                  )}
+                </div>
+
+                {filteredAttendance.length === 0 ? (
+                  <div className="p-12 text-center space-y-3">
+                    <div className="w-12 h-12 rounded-full bg-theme-app border border-theme text-theme-muted mx-auto flex items-center justify-center">
+                      <ClipboardCheck className="w-6 h-6" />
+                    </div>
+                    <h4 className="text-sm font-semibold text-theme-main">Nenhuma presença nesta data</h4>
+                    <p className="text-xs text-theme-muted max-w-sm mx-auto">
+                      {!isAluno 
+                        ? 'Utilize o painel ao lado para registrar a chamada dos alunos presentes ou clique no botão "Totem / QR Code".'
+                        : 'Nenhuma presença registrada para você nesta data selecionada.'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-theme">
+                    {filteredAttendance.map(item => {
+                      const student = students.find(s => s.id === item.studentId);
+                      const progressPct = student 
+                        ? Math.min(100, Math.round((student.presencasNaFaixa / student.presencasMetaGrau) * 100))
+                        : 50;
+
+                      // Find techniques student learned on this date
+                      const studentLearnedOnDate = student?.tecnicasAprendidas?.filter(t => t.dataAprendida === item.data) || [];
+
+                      return (
+                        <div 
+                          key={item.id}
+                          className="p-4 hover:bg-theme-app/50 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-500 font-bold text-xs flex items-center justify-center shrink-0">
+                              {item.studentNome.charAt(0)}
+                            </div>
+
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-sm text-theme-main">{item.studentNome}</span>
+                                <BeltBadge faixa={item.studentFaixa} graus={item.studentGraus} size="sm" />
+                              </div>
+
+                              <div className="flex items-center gap-3 text-xs text-theme-muted mt-0.5">
+                                <span className="flex items-center gap-1 font-mono text-[11px]">
+                                  <Clock className="w-3 h-3 text-theme-muted" />
+                                  {item.horario}
+                                </span>
+                                <span>•</span>
+                                <span className="truncate max-w-[200px]">{item.turmaTitulo}</span>
+                              </div>
+
+                              {/* Technique learned indicator badge */}
+                              <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-md">
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                                  Técnica Aprendida Registrada
+                                </span>
+                                {studentLearnedOnDate.length > 0 && (
+                                  <span className="text-[10px] text-theme-muted font-semibold truncate max-w-[240px]">
+                                    ({studentLearnedOnDate.map(t => t.titulo).join(', ')})
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                           </div>
 
-                          <div className="flex items-center gap-3 text-xs text-slate-500 mt-0.5">
-                            <span className="flex items-center gap-1 font-mono text-[11px]">
-                              <Clock className="w-3 h-3 text-slate-400" />
-                              {item.horario}
-                            </span>
-                            <span>•</span>
-                            <span className="truncate max-w-[200px]">{item.turmaTitulo}</span>
-                          </div>
+                          <div className="flex items-center justify-between sm:justify-end gap-4 pl-12 sm:pl-0">
+                            {/* Belt progress towards next degree */}
+                            {student && (
+                              <div className="text-right min-w-[120px]">
+                                <div className="flex items-center justify-end gap-1 text-[11px] font-semibold text-theme-muted">
+                                  <Award className="w-3 h-3 text-amber-500" />
+                                  <span>{student.presencasNaFaixa} / {student.presencasMetaGrau} aulas</span>
+                                </div>
+                                <div className="w-24 bg-theme-app border border-theme rounded-full h-1.5 ml-auto mt-1 overflow-hidden">
+                                  <div 
+                                    className={`h-full rounded-full ${progressPct >= 100 ? 'bg-amber-500' : 'bg-blue-600'}`}
+                                    style={{ width: `${progressPct}%` }}
+                                  />
+                                </div>
+                              </div>
+                            )}
 
-                          {/* Technique learned indicator badge */}
-                          <div className="mt-1 flex items-center gap-1.5 flex-wrap">
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
-                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                              Técnica Aprendida Registrada
-                            </span>
-                            {studentLearnedOnDate.length > 0 && (
-                              <span className="text-[10px] text-slate-600 font-semibold truncate max-w-[240px]">
-                                ({studentLearnedOnDate.map(t => t.titulo).join(', ')})
-                              </span>
+                            {!isAluno && (
+                              <button
+                                onClick={() => removeAttendance(item.id)}
+                                className="text-theme-muted hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-500/10 transition-colors cursor-pointer"
+                                title="Remover presença"
+                              >
+                                <XCircle className="w-4 h-4" />
+                              </button>
                             )}
                           </div>
                         </div>
-                      </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
 
-                      <div className="flex items-center justify-between sm:justify-end gap-4 pl-12 sm:pl-0">
-                        {/* Belt progress towards next degree */}
-                        {student && (
-                          <div className="text-right min-w-[120px]">
-                            <div className="flex items-center justify-end gap-1 text-[11px] font-semibold text-slate-600">
-                              <Award className="w-3 h-3 text-amber-500" />
-                              <span>{student.presencasNaFaixa} / {student.presencasMetaGrau} aulas</span>
-                            </div>
-                            <div className="w-24 bg-slate-100 rounded-full h-1.5 ml-auto mt-1 overflow-hidden">
-                              <div 
-                                className={`h-full rounded-full ${progressPct >= 100 ? 'bg-amber-500' : 'bg-blue-600'}`}
-                                style={{ width: `${progressPct}%` }}
-                              />
-                            </div>
+            {/* Right Col: Instant Tatame Check-in Pad for students */}
+            <div className="space-y-4">
+              <div className="bg-theme-card rounded-2xl p-5 border border-theme shadow-xs space-y-4">
+                <div className="flex items-center justify-between border-b border-theme pb-3">
+                  <h3 className="font-bold text-theme-main text-sm flex items-center gap-2">
+                    <Flame className="w-4 h-4 text-orange-500" />
+                    Dar Presença Imediata
+                  </h3>
+                  <span className="text-[11px] text-theme-muted font-mono">Hoje</span>
+                </div>
+
+                <p className="text-xs text-theme-muted">
+                  {isProfessor 
+                    ? `Lançar presença para seus alunos vinculados (Prof. ${currentUser.nome}). As técnicas do dia serão registradas automaticamente.`
+                    : 'Clique em "+ Marcar" para adicionar o aluno instantaneamente à aula de hoje:'}
+                </p>
+
+                <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1">
+                  {scopedStudents.map(student => {
+                    const targetTurma = selectedTurma === 'all' ? (scopedClasses[0]?.id || classes[0]?.id) : selectedTurma;
+                    const isCheckedToday = attendance.some(
+                      a => a.studentId === student.id && a.data === selectedDate
+                    );
+
+                    return (
+                      <div
+                        key={student.id}
+                        className={`p-3 rounded-xl border transition-all flex items-center justify-between gap-2 ${
+                          isCheckedToday
+                            ? 'bg-emerald-500/10 border-emerald-500/30'
+                            : 'bg-theme-app hover:bg-theme-card border-theme'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <p className="font-semibold text-xs text-theme-main truncate">{student.nome}</p>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <BeltBadge faixa={student.faixa} graus={student.graus} size="sm" showLabel={false} />
+                            <span className="text-[10px] text-theme-muted font-mono">
+                              {student.presencasNaFaixa} treinos
+                            </span>
                           </div>
-                        )}
+                        </div>
 
                         {!isAluno && (
                           <button
-                            onClick={() => removeAttendance(item.id)}
-                            className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors"
-                            title="Remover presença"
+                            onClick={() => handleQuickCheckin(student.id, targetTurma, student.nome)}
+                            disabled={isCheckedToday}
+                            className={`text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-colors shrink-0 cursor-pointer ${
+                              isCheckedToday
+                                ? 'bg-emerald-600 text-white cursor-default'
+                                : 'bg-theme-accent hover:opacity-90 text-white'
+                            }`}
                           >
-                            <XCircle className="w-4 h-4" />
+                            {isCheckedToday ? '✓ Presente' : '+ Marcar'}
                           </button>
                         )}
                       </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW MODE 2: CONSULTA POR PERÍODO */}
+      {viewMode === 'period' && (
+        <div className="space-y-6">
+          {/* Period Filter Bar with Quick Presets */}
+          <div className="bg-theme-card rounded-2xl p-5 border border-theme shadow-xs space-y-4 no-print">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-theme pb-3">
+              <div className="flex items-center gap-2">
+                <CalendarDays className="w-5 h-5 text-amber-500" />
+                <div>
+                  <h3 className="text-sm font-bold text-theme-main">Filtro de Período para Frequência</h3>
+                  <p className="text-xs text-theme-muted">Consulte a quantidade de presenças e histórico de cada aluno no intervalo selecionado.</p>
+                </div>
+              </div>
+
+              {/* Quick Presets */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const today = new Date().toISOString().split('T')[0];
+                    setStartDate(today);
+                    setEndDate(today);
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-theme bg-theme-app text-[11px] font-semibold text-theme-muted hover:text-theme-main transition-colors cursor-pointer"
+                >
+                  Hoje
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const end = new Date().toISOString().split('T')[0];
+                    const start = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                    setStartDate(start);
+                    setEndDate(end);
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-theme bg-theme-app text-[11px] font-semibold text-theme-muted hover:text-theme-main transition-colors cursor-pointer"
+                >
+                  Últimos 7 dias
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const end = new Date().toISOString().split('T')[0];
+                    const start = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+                    setStartDate(start);
+                    setEndDate(end);
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-theme bg-theme-app text-[11px] font-semibold text-theme-muted hover:text-theme-main transition-colors cursor-pointer"
+                >
+                  Últimos 30 dias
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const now = new Date();
+                    const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+                    const end = now.toISOString().split('T')[0];
+                    setStartDate(start);
+                    setEndDate(end);
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-theme bg-theme-app text-[11px] font-semibold text-amber-500 hover:text-amber-400 transition-colors cursor-pointer"
+                >
+                  Este Mês
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const now = new Date();
+                    const start = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().split('T')[0];
+                    const end = new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0];
+                    setStartDate(start);
+                    setEndDate(end);
+                  }}
+                  className="px-2.5 py-1 rounded-lg border border-theme bg-theme-app text-[11px] font-semibold text-theme-muted hover:text-theme-main transition-colors cursor-pointer"
+                >
+                  Mês Anterior
+                </button>
+              </div>
+            </div>
+
+            {/* Inputs: StartDate, EndDate, Turma, Search */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-theme-muted mb-1">Data Inicial</label>
+                <div className="flex items-center gap-2 bg-theme-app border border-theme rounded-xl px-3 py-2 text-theme-main">
+                  <Calendar className="w-4 h-4 text-theme-muted" />
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full bg-transparent text-xs font-semibold focus:outline-none text-theme-main cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-theme-muted mb-1">Data Final</label>
+                <div className="flex items-center gap-2 bg-theme-app border border-theme rounded-xl px-3 py-2 text-theme-main">
+                  <Calendar className="w-4 h-4 text-theme-muted" />
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full bg-transparent text-xs font-semibold focus:outline-none text-theme-main cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-theme-muted mb-1">Filtrar Turma</label>
+                <div className="flex items-center gap-2 bg-theme-app border border-theme rounded-xl px-3 py-2 text-theme-main">
+                  <Filter className="w-4 h-4 text-theme-muted" />
+                  <select
+                    value={selectedTurma}
+                    onChange={(e) => setSelectedTurma(e.target.value)}
+                    className="w-full bg-transparent text-xs font-semibold focus:outline-none text-theme-main cursor-pointer"
+                  >
+                    <option value="all">Todas as Turmas</option>
+                    {scopedClasses.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.titulo}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-theme-muted mb-1">Buscar Aluno</label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Filtrar por nome..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full text-xs bg-theme-app border border-theme rounded-xl px-3.5 py-2 pl-9 focus:outline-none focus:ring-2 focus:ring-amber-500 text-theme-main"
+                  />
+                  <Search className="w-3.5 h-3.5 text-theme-muted absolute left-3 top-2.5" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* KPI Summary Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-theme-card p-4 rounded-2xl border border-theme shadow-xs space-y-1">
+              <span className="text-[11px] text-theme-muted font-medium flex items-center gap-1.5">
+                <ClipboardCheck className="w-3.5 h-3.5 text-amber-500" />
+                Total no Período
+              </span>
+              <p className="text-2xl font-black text-theme-main">{totalPeriodCheckins}</p>
+              <p className="text-[10px] text-theme-muted">presenças computadas</p>
+            </div>
+
+            <div className="bg-theme-card p-4 rounded-2xl border border-theme shadow-xs space-y-1">
+              <span className="text-[11px] text-theme-muted font-medium flex items-center gap-1.5">
+                <Users className="w-3.5 h-3.5 text-blue-500" />
+                Alunos Ativos
+              </span>
+              <p className="text-2xl font-black text-theme-main">{activeStudentsInPeriod}</p>
+              <p className="text-[10px] text-theme-muted">com ao menos 1 treino</p>
+            </div>
+
+            <div className="bg-theme-card p-4 rounded-2xl border border-theme shadow-xs space-y-1">
+              <span className="text-[11px] text-theme-muted font-medium flex items-center gap-1.5">
+                <TrendingUp className="w-3.5 h-3.5 text-emerald-500" />
+                Média por Aluno
+              </span>
+              <p className="text-2xl font-black text-theme-main">{avgAttendance}</p>
+              <p className="text-[10px] text-theme-muted">treinos por aluno ativo</p>
+            </div>
+
+            <div className="bg-theme-card p-4 rounded-2xl border border-theme shadow-xs space-y-1">
+              <span className="text-[11px] text-theme-muted font-medium flex items-center gap-1.5">
+                <Award className="w-3.5 h-3.5 text-amber-500" />
+                Destaque de Frequência
+              </span>
+              <p className="text-sm font-bold text-theme-main truncate" title={topStudent || 'Nenhum'}>
+                {topStudent || '—'}
+              </p>
+              <p className="text-[10px] text-theme-muted">
+                {studentPeriodStats[0]?.total > 0 ? `${studentPeriodStats[0].total} presenças no período` : 'Sem registros'}
+              </p>
+            </div>
+          </div>
+
+          {/* Student Breakdown Table */}
+          <div className="bg-theme-card rounded-2xl border border-theme shadow-xs overflow-hidden">
+            <div className="p-4 md:p-5 border-b border-theme flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="font-bold text-theme-main text-sm">
+                  Frequência Individual de Alunos no Período ({studentPeriodStats.length})
+                </h3>
+                <p className="text-xs text-theme-muted">
+                  De {startDate ? new Date(startDate + 'T00:00:00').toLocaleDateString('pt-BR') : 'início'} até {endDate ? new Date(endDate + 'T00:00:00').toLocaleDateString('pt-BR') : 'hoje'}
+                </p>
+              </div>
+
+              <span className="text-xs font-semibold text-theme-muted bg-theme-app border border-theme px-3 py-1.5 rounded-xl self-start sm:self-auto">
+                Ordenado por maior frequência
+              </span>
+            </div>
+
+            {studentPeriodStats.length === 0 ? (
+              <div className="p-12 text-center space-y-3">
+                <div className="w-12 h-12 rounded-full bg-theme-app border border-theme text-theme-muted mx-auto flex items-center justify-center">
+                  <Users className="w-6 h-6" />
+                </div>
+                <h4 className="text-sm font-semibold text-theme-main">Nenhum aluno encontrado</h4>
+                <p className="text-xs text-theme-muted max-w-sm mx-auto">
+                  Ajuste os filtros de data, turma ou pesquisa para consultar os alunos cadastrados.
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-theme">
+                {studentPeriodStats.map(({ student, total, records }) => {
+                  const isExpanded = expandedStudentId === student.id;
+
+                  return (
+                    <div key={student.id} className="p-4 hover:bg-theme-app/50 transition-colors space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-10 h-10 rounded-full font-bold text-xs flex items-center justify-center shrink-0 border ${
+                            total > 0 
+                              ? 'bg-amber-500/10 border-amber-500/30 text-amber-500' 
+                              : 'bg-theme-app border-theme text-theme-muted'
+                          }`}>
+                            {student.nome.charAt(0)}
+                          </div>
+
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-sm text-theme-main">{student.nome}</span>
+                              <BeltBadge faixa={student.faixa} graus={student.graus} size="sm" />
+                            </div>
+
+                            <div className="flex items-center gap-3 text-xs text-theme-muted mt-0.5">
+                              <span>Turma: {student.turmaPreferida || 'Geral'}</span>
+                              <span>•</span>
+                              <span>Histórico geral: {student.totalPresencasHistorico || student.presencasNaFaixa} treinos</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Frequency Count & Expander Button */}
+                        <div className="flex items-center justify-between sm:justify-end gap-3 pl-12 sm:pl-0">
+                          <div className="text-right">
+                            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs font-black border ${
+                              total >= 12
+                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                : total >= 4
+                                ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                                : total > 0
+                                ? 'bg-blue-500/10 text-blue-400 border-blue-500/30'
+                                : 'bg-theme-app text-theme-muted border-theme'
+                            }`}>
+                              <Flame className="w-3.5 h-3.5" />
+                              {total} {total === 1 ? 'presença' : 'presenças'}
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setExpandedStudentId(isExpanded ? null : student.id)}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-theme bg-theme-app hover:bg-theme-card text-xs font-semibold text-theme-main transition-colors cursor-pointer"
+                          >
+                            <span>{isExpanded ? 'Ocultar' : 'Ver Treinos'}</span>
+                            {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Expanded Drawer: All attendances of this student in the period */}
+                      {isExpanded && (
+                        <div className="mt-2 pl-4 sm:pl-12 pt-3 border-t border-theme/60 space-y-2">
+                          <p className="text-[11px] font-bold text-theme-muted uppercase tracking-wider">
+                            Detalhamento dos {records.length} treinos no período:
+                          </p>
+
+                          {records.length === 0 ? (
+                            <p className="text-xs text-theme-muted italic">
+                              Nenhuma presença registrada para este aluno no intervalo selecionado.
+                            </p>
+                          ) : (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                              {records.map(rec => (
+                                <div
+                                  key={rec.id}
+                                  className="p-2.5 rounded-xl bg-theme-app border border-theme text-xs space-y-1"
+                                >
+                                  <div className="flex items-center justify-between text-theme-main font-semibold">
+                                    <span className="flex items-center gap-1 text-[11px]">
+                                      <Calendar className="w-3 h-3 text-amber-500" />
+                                      {new Date(rec.data + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                    </span>
+                                    <span className="font-mono text-[10px] text-theme-muted flex items-center gap-1">
+                                      <Clock className="w-3 h-3 text-theme-muted" />
+                                      {rec.horario || '19:30'}
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-theme-muted truncate">
+                                    {rec.turmaTitulo || 'Treino Regular'}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -498,70 +960,7 @@ export const Presenca: React.FC = () => {
             )}
           </div>
         </div>
-
-        {/* Right Col: Instant Tatame Check-in Pad for students */}
-        <div className="space-y-4">
-          <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                <Flame className="w-4 h-4 text-orange-500" />
-                Dar Presença Imediata
-              </h3>
-              <span className="text-[11px] text-slate-500 font-mono">Hoje</span>
-            </div>
-
-            <p className="text-xs text-slate-500">
-              {isProfessor 
-                ? `Lançar presença para seus alunos vinculados (Prof. ${currentUser.nome}). As técnicas do dia serão registradas automaticamente.`
-                : 'Clique em "+ Marcar" para adicionar o aluno instantaneamente à aula de hoje:'}
-            </p>
-
-            <div className="space-y-2 max-h-[480px] overflow-y-auto pr-1">
-              {scopedStudents.map(student => {
-                const targetTurma = selectedTurma === 'all' ? (scopedClasses[0]?.id || classes[0]?.id) : selectedTurma;
-                const isCheckedToday = attendance.some(
-                  a => a.studentId === student.id && a.data === selectedDate
-                );
-
-                return (
-                  <div
-                    key={student.id}
-                    className={`p-3 rounded-xl border transition-all flex items-center justify-between gap-2 ${
-                      isCheckedToday
-                        ? 'bg-emerald-50/50 border-emerald-200/80'
-                        : 'bg-white hover:bg-slate-50 border-slate-200'
-                    }`}
-                  >
-                    <div className="min-w-0">
-                      <p className="font-semibold text-xs text-slate-800 truncate">{student.nome}</p>
-                      <div className="flex items-center gap-1.5 mt-1">
-                        <BeltBadge faixa={student.faixa} graus={student.graus} size="sm" showLabel={false} />
-                        <span className="text-[10px] text-slate-500 font-mono">
-                          {student.presencasNaFaixa} treinos
-                        </span>
-                      </div>
-                    </div>
-
-                    {!isAluno && (
-                      <button
-                        onClick={() => handleQuickCheckin(student.id, targetTurma, student.nome)}
-                        disabled={isCheckedToday}
-                        className={`text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-colors shrink-0 ${
-                          isCheckedToday
-                            ? 'bg-emerald-600 text-white cursor-default'
-                            : 'bg-slate-900 hover:bg-blue-600 text-white'
-                        }`}
-                      >
-                        {isCheckedToday ? '✓ Presente' : '+ Marcar'}
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      </div>
+      )}
 
       {/* Manual Attendance Modal */}
       {showManualModal && (

@@ -58,6 +58,7 @@ const SAFE_USER_FIELDS =
 export class UsersController {
   /**
    * Lista usuários sem retornar senha ou hash.
+   * Utiliza select('*') para tolerar esquemas com ou sem colunas opcionais (telefone, etc.)
    */
   static async listUsers(req: Request, res: Response): Promise<void> {
     try {
@@ -67,7 +68,7 @@ export class UsersController {
 
       let query = client
         .from('usuarios')
-        .select(SAFE_USER_FIELDS)
+        .select('*')
         .order('created_at', { ascending: false });
 
       if (status && status !== 'todos') {
@@ -77,11 +78,21 @@ export class UsersController {
       const { data, error } = await query;
 
       if (error) {
+        console.error('[USERS LIST DB ERROR]', error);
         res.status(500).json({ success: false, error: error.message });
         return;
       }
 
-      res.json({ success: true, users: data || [] });
+      const safeUsers = (data || []).map((row: any) => {
+        const { password: _, ...safe } = row;
+        return {
+          ...safe,
+          telefone: safe.telefone || safe.permissions?.telefone || '',
+          permissions: safe.permissions || defaultPermissions(safe.role as UserRole)
+        };
+      });
+
+      res.json({ success: true, users: safeUsers });
     } catch {
       res.status(500).json({
         success: false,
@@ -134,10 +145,7 @@ export class UsersController {
 
       const { data: userRow, error: findErr } = await client
         .from('usuarios')
-        .select(
-          'id, nome, email, role, status, professor_id, student_id, ' +
-          'telefone, faixa, graus'
-        )
+        .select('*')
         .eq('id', userId)
         .maybeSingle();
 
@@ -160,6 +168,7 @@ export class UsersController {
       let assignedProfId: string | null = userRow.professor_id || null;
       let assignedStudentId: string | null = userRow.student_id || null;
       const cleanEmail = String(userRow.email || '').toLowerCase().trim();
+      const userPhone = userRow.telefone || userRow.permissions?.telefone || '';
 
       if (userRow.role === 'professor' && !assignedProfId) {
         const { data: existingProf, error: profErr } = await client
@@ -194,20 +203,21 @@ export class UsersController {
               id: newProfId,
               nome: userRow.nome,
               email: cleanEmail,
-              telefone: userRow.telefone || '',
-              faixa: userRow.faixa || 'branca',
+              telefone: userPhone,
+              faixa: userRow.faixa || 'preta',
               graus: Number(userRow.graus || 0),
-              bio: '',
-              registro_cbjj: '',
-              chave_pix: '',
+              bio: userRow.permissions?.bio || '',
+              registro_cbjj: userRow.permissions?.registroCBJJ || '',
+              chave_pix: userRow.permissions?.chavePix || '',
               banco: '',
               turmas: []
             }]);
 
           if (insProfErr) {
+            console.error('[APPROVE PROF INSERT ERROR]', insProfErr);
             res.status(500).json({
               success: false,
-              error: 'Falha ao criar o perfil de professor.'
+              error: 'Falha ao criar o perfil de professor: ' + insProfErr.message
             });
             return;
           }
@@ -247,20 +257,23 @@ export class UsersController {
               id: newStudentId,
               nome: userRow.nome,
               email: cleanEmail,
-              telefone: userRow.telefone || '',
+              telefone: userPhone,
               faixa: userRow.faixa || 'branca',
               graus: Number(userRow.graus || 0),
               data_inicio: new Date().toISOString().split('T')[0],
+              data_nascimento: userRow.permissions?.dataNascimento || null,
+              turma_preferida: userRow.permissions?.turmaPreferencia || null,
               status_pagamento: 'em_dia',
-              plano: 'Mensal',
+              plano: userRow.permissions?.plano || 'Mensal',
               valor_mensalidade: 180,
               dia_vencimento: 10
             }]);
 
           if (insStudentErr) {
+            console.error('[APPROVE STUDENT INSERT ERROR]', insStudentErr);
             res.status(500).json({
               success: false,
-              error: 'Falha ao criar o perfil de aluno.'
+              error: 'Falha ao criar o perfil de aluno: ' + insStudentErr.message
             });
             return;
           }

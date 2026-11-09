@@ -1676,8 +1676,8 @@ export async function registerNewUserInSupabase(
   if (!cleanEmail) {
     return { success: false, message: 'Informe um endereço de e-mail válido.' };
   }
-  if (!reg.password || reg.password.length < 8) {
-    return { success: false, message: 'A senha deve conter no mínimo 8 caracteres.' };
+  if (!reg.password || reg.password.length < 6) {
+    return { success: false, message: 'A senha deve conter no mínimo 6 caracteres.' };
   }
 
   try {
@@ -1691,7 +1691,13 @@ export async function registerNewUserInSupabase(
         role: reg.role,
         telefone: reg.telefone?.trim(),
         faixa: reg.faixa,
-        graus: Number(reg.graus || 0)
+        graus: Number(reg.graus || 0),
+        dataNascimento: reg.dataNascimento,
+        plano: reg.plano,
+        turmaPreferencia: reg.turmaPreferencia,
+        registroCBJJ: reg.registroCBJJ,
+        chavePix: reg.chavePix,
+        bio: reg.bio
       })
     });
 

@@ -208,7 +208,21 @@ export class AuthController {
    * Endpoint de cadastro de novo usuário com criptografia bcrypt imediata no backend
    */
   static async register(req: Request, res: Response): Promise<void> {
-    const { nome, email, password, role, telefone, faixa, graus } = req.body;
+    const { 
+      nome, 
+      email, 
+      password, 
+      role, 
+      telefone, 
+      faixa, 
+      graus,
+      dataNascimento,
+      plano,
+      turmaPreferencia,
+      registroCBJJ,
+      chavePix,
+      bio
+    } = req.body;
 
     if (!nome || !email || !password) {
       res.status(400).json({ success: false, message: 'Nome, e-mail e senha são obrigatórios.' });
@@ -216,8 +230,8 @@ export class AuthController {
     }
 
     const cleanEmail = String(email).toLowerCase().trim();
-    if (password.length < 8) {
-      res.status(400).json({ success: false, message: 'A senha deve possuir no mínimo 8 caracteres.' });
+    if (password.length < 6) {
+      res.status(400).json({ success: false, message: 'A senha deve possuir no mínimo 6 caracteres.' });
       return;
     }
 
@@ -237,7 +251,19 @@ export class AuthController {
       const hashedPassword = bcrypt.hashSync(password, 12);
       const newUserId = `user-${Date.now()}`;
 
-      const { error: insErr } = await client.from('usuarios').insert([{
+      // Metadados complementares salvos em permissions para integridade máxima
+      const extraMetadata: Record<string, any> = {
+        telefone: telefone ? String(telefone).trim() : null,
+        dataNascimento: dataNascimento || null,
+        plano: plano || null,
+        turmaPreferencia: turmaPreferencia || null,
+        registroCBJJ: registroCBJJ || null,
+        chavePix: chavePix || null,
+        bio: bio || null
+      };
+
+      // Tenta primeiro inserir com a coluna telefone caso ela exista na tabela do Supabase
+      const fullRow: Record<string, any> = {
         id: newUserId,
         nome: String(nome).trim(),
         email: cleanEmail,
@@ -245,13 +271,26 @@ export class AuthController {
         role: role === 'professor' ? 'professor' : 'aluno',
         status: 'pendente',
         telefone: telefone ? String(telefone).trim() : null,
-        faixa: faixa || 'Branca',
+        faixa: faixa || (role === 'professor' ? 'preta' : 'branca'),
         graus: Number(graus || 0),
         is_master_admin: false,
+        permissions: extraMetadata,
         created_at: new Date().toISOString()
-      }]);
+      };
+
+      let { error: insErr } = await client.from('usuarios').insert([fullRow]);
+
+      // Se falhar porque a coluna 'telefone' não existe no cache do Supabase:
+      if (insErr && (insErr.message?.includes('telefone') || insErr.message?.includes('schema cache'))) {
+        console.warn('[AUTH REGISTER] Coluna telefone não encontrada na tabela usuarios. Executando inserção resiliente com metadados em permissions...');
+        const resilientRow = { ...fullRow };
+        delete resilientRow.telefone;
+        const retry = await client.from('usuarios').insert([resilientRow]);
+        insErr = retry.error;
+      }
 
       if (insErr) {
+        console.error('[AUTH REGISTER ERROR]', insErr);
         res.status(500).json({ success: false, message: `Erro ao salvar cadastro: ${insErr.message}` });
         return;
       }
