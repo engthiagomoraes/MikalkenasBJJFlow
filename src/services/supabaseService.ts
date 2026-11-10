@@ -1,4 +1,4 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { createBackendDataClient } from './backendDataClient';
 import { 
   Student, 
@@ -666,77 +666,43 @@ export async function testSupabaseConnection(url: string, key: string): Promise<
   }
 }
 
-export async function checkSupabaseTables(url: string, key: string): Promise<SupabaseTableStatus[]> {
-  const cleanUrl = url.trim().replace(/\/+$/, '');
-  const cleanKey = key.trim();
+/**
+ * Diagnóstico das tabelas feito pelo backend (/api/system/tables, somente admin).
+ * O navegador não consulta mais o Supabase com a chave pública — ela não tem acesso
+ * a nenhuma tabela. Os parâmetros url/key são mantidos só por compatibilidade.
+ */
+export async function checkSupabaseTables(_url?: string, _key?: string): Promise<SupabaseTableStatus[]> {
+  const fail = (error: string) => REQUIRED_SUPABASE_TABLES.map(t => ({
+    name: t.name, label: t.label, description: t.description, exists: false, count: 0, error
+  }));
 
-  const keyAnalysis = analyzeSupabaseKey(cleanKey);
-  if (keyAnalysis.isSecret) {
-    return REQUIRED_SUPABASE_TABLES.map(t => ({
-      name: t.name,
-      label: t.label,
-      description: t.description,
-      exists: false,
-      count: 0,
-      error: 'Chave Secreta detectada. O Supabase exige a Chave Pública (anon) no navegador.'
-    }));
-  }
-
-  let client: SupabaseClient;
+  let token: string | null = null;
   try {
-    client = createClient(cleanUrl, cleanKey, { auth: { persistSession: false } });
-  } catch (err: any) {
-    return REQUIRED_SUPABASE_TABLES.map(t => ({
-      name: t.name,
-      label: t.label,
-      description: t.description,
-      exists: false,
-      count: 0,
-      error: err.message
-    }));
-  }
+    token = localStorage.getItem('ternatio_bjj_auth_token') || localStorage.getItem('bjjflow_token');
+  } catch {}
+  if (!token) return fail('Entre como administrador para verificar as tabelas.');
 
-  const results: SupabaseTableStatus[] = [];
-
-  for (const table of REQUIRED_SUPABASE_TABLES) {
-    try {
-      const { count, error } = await client
-        .from(table.name)
-        .select('*', { count: 'exact', head: true });
-
-      if (error) {
-        const msg = error.message?.toLowerCase() || '';
-        const doesNotExist = error.code === '42P01' || msg.includes('does not exist') || msg.includes('relation');
-        results.push({
-          name: table.name,
-          label: table.label,
-          description: table.description,
-          exists: !doesNotExist && error.code !== 'PGRST205',
-          count: 0,
-          error: error.message
-        });
-      } else {
-        results.push({
-          name: table.name,
-          label: table.label,
-          description: table.description,
-          exists: true,
-          count: count ?? 0
-        });
-      }
-    } catch (err: any) {
-      results.push({
-        name: table.name,
-        label: table.label,
-        description: table.description,
-        exists: false,
-        count: 0,
-        error: err.message
-      });
+  try {
+    const resp = await fetch('/api/system/tables', { headers: { Authorization: `Bearer ${token}` } });
+    const json = await safeParseJsonResponse(resp);
+    if (!resp.ok || !json?.success || !Array.isArray(json.tables)) {
+      return fail(json?.error || json?.message || `Erro HTTP ${resp.status}`);
     }
+    const byName = new Map<string, any>(json.tables.map((t: any) => [t.name, t]));
+    return REQUIRED_SUPABASE_TABLES.map(t => {
+      const r = byName.get(t.name);
+      return {
+        name: t.name,
+        label: t.label,
+        description: t.description,
+        exists: Boolean(r?.exists),
+        count: Number(r?.count) || 0,
+        ...(r?.error ? { error: String(r.error) } : {})
+      };
+    });
+  } catch (err: any) {
+    return fail(err?.message || 'Falha de comunicação com o servidor.');
   }
-
-  return results;
 }
 
 export async function exportAllToSupabase(
