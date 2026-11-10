@@ -6,3 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Pacotes exportados do AI Studio podem conter código antigo com credenciais
+*.zip
+package-lock.json

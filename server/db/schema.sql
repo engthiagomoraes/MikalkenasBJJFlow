@@ -12,10 +12,11 @@ CREATE TABLE IF NOT EXISTS usuarios (
   id text PRIMARY KEY,
   nome text NOT NULL,
   email text UNIQUE NOT NULL,
-  password text,
+  password text,                -- somente hash bcrypt (custo 12), gerado no backend
   role text NOT NULL DEFAULT 'aluno' CHECK (role IN ('admin', 'professor', 'aluno')),
+  -- 'aprovado' é legado; após a migração 03 os valores oficiais são pendente/ativo/reprovado/inativo
   status text NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'aprovado', 'reprovado', 'inativo', 'ativo')),
-  is_master_admin boolean DEFAULT false,
+  is_master_admin boolean DEFAULT false,  -- alterado apenas por SQL manual, nunca pela API
   professor_id text,
   student_id text,
   faixa text DEFAULT 'branca',
@@ -23,8 +24,12 @@ CREATE TABLE IF NOT EXISTS usuarios (
   telefone text,
   permissions jsonb DEFAULT '{}'::jsonb,
   created_at timestamptz DEFAULT clock_timestamp(),
-  updated_at timestamptz DEFAULT clock_timestamp()
+  password_changed_at timestamptz,
+  must_change_password boolean NOT NULL DEFAULT false
+  -- não existe coluna updated_at nesta tabela
 );
+
+-- Recuperação de senha e auditoria: ver migrations/2026-11-10_01_seguranca_usuarios.sql
 
 -- 3. TABELA: PROFESSORES
 CREATE TABLE IF NOT EXISTS professores (
@@ -151,77 +156,5 @@ CREATE TABLE IF NOT EXISTS tecnicas (
   created_at timestamptz DEFAULT clock_timestamp()
 );
 
--- 10. FUNÇÃO RPC: APROVAR USUARIO COM CRIACAO AUTOMATICA
-CREATE OR REPLACE FUNCTION aprovar_usuario(p_user_id text)
-RETURNS jsonb
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-DECLARE
-  v_usuario record;
-  v_prof_id text;
-  v_aluno_id text;
-BEGIN
-  SELECT * INTO v_usuario FROM usuarios WHERE id = p_user_id;
-  IF NOT FOUND THEN
-    RETURN jsonb_build_object('success', false, 'message', 'Usuário não encontrado');
-  END IF;
-
-  IF v_usuario.role = 'professor' THEN
-    SELECT id INTO v_prof_id FROM professores 
-    WHERE id = v_usuario.professor_id OR lower(email) = lower(v_usuario.email)
-    LIMIT 1;
-
-    IF v_prof_id IS NULL THEN
-      v_prof_id := 'inst-' || substr(md5(random()::text || clock_timestamp()::text), 1, 10);
-      INSERT INTO professores (id, nome, email, telefone, faixa, graus, bio, turmas)
-      VALUES (
-        v_prof_id,
-        v_usuario.nome,
-        v_usuario.email,
-        COALESCE(v_usuario.telefone, ''),
-        COALESCE(v_usuario.faixa, 'preta'),
-        COALESCE(v_usuario.graus, 1),
-        'Professor aprovado pela administração da Ternatio BJJ.',
-        ARRAY['Jiu-Jitsu Geral']
-      );
-    END IF;
-
-    UPDATE usuarios 
-    SET status = 'aprovado', professor_id = v_prof_id
-    WHERE id = p_user_id;
-
-    RETURN jsonb_build_object('success', true, 'role', 'professor', 'professor_id', v_prof_id);
-
-  ELSIF v_usuario.role = 'aluno' THEN
-    SELECT id INTO v_aluno_id FROM alunos 
-    WHERE id = v_usuario.student_id OR lower(email) = lower(v_usuario.email)
-    LIMIT 1;
-
-    IF v_aluno_id IS NULL THEN
-      v_aluno_id := 'aluno-' || substr(md5(random()::text || clock_timestamp()::text), 1, 10);
-      INSERT INTO alunos (id, nome, email, telefone, faixa, graus, plano, status_pagamento, data_inicio)
-      VALUES (
-        v_aluno_id,
-        v_usuario.nome,
-        v_usuario.email,
-        COALESCE(v_usuario.telefone, ''),
-        COALESCE(v_usuario.faixa, 'branca'),
-        COALESCE(v_usuario.graus, 0),
-        'regular',
-        'em_dia',
-        CURRENT_DATE::text
-      );
-    END IF;
-
-    UPDATE usuarios 
-    SET status = 'aprovado', student_id = v_aluno_id
-    WHERE id = p_user_id;
-
-    RETURN jsonb_build_object('success', true, 'role', 'aluno', 'student_id', v_aluno_id);
-  ELSE
-    UPDATE usuarios SET status = 'aprovado' WHERE id = p_user_id;
-    RETURN jsonb_build_object('success', true, 'role', v_usuario.role);
-  END IF;
-END;
-$$;
+-- 10. (Removido) A RPC aprovar_usuario criava perfis automaticamente e foi descontinuada.
+--     A aprovação é feita apenas pelo backend (POST /api/users/:id/approve), sem criação automática.

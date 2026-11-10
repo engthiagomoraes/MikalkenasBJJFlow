@@ -5,9 +5,11 @@ import { useBjj } from '../../context/BjjContext';
 interface ChangePasswordModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /** Troca obrigatória (senha provisória): sem botão de fechar/cancelar. */
+  forced?: boolean;
 }
 
-export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ isOpen, onClose }) => {
+export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ isOpen, onClose, forced = false }) => {
   const { currentUser, changeCurrentUserPassword } = useBjj();
 
   const [currentPassword, setCurrentPassword] = useState('');
@@ -47,8 +49,8 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ isOpen
       return;
     }
 
-    if (!newPassword || newPassword.length < 6) {
-      setErrorMsg('A nova senha deve possuir no mínimo 6 caracteres.');
+    if (!newPassword || newPassword.length < 8 || newPassword.length > 72) {
+      setErrorMsg('A nova senha deve ter entre 8 e 72 caracteres.');
       return;
     }
 
@@ -91,24 +93,29 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ isOpen
               <Key className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-base font-extrabold text-theme-main">Alterar Minha Senha</h2>
+              <h2 className="text-base font-extrabold text-theme-main">{forced ? 'Troca de Senha Obrigatória' : 'Alterar Minha Senha'}</h2>
               <p className="text-xs text-theme-muted">
                 {currentUser.nome} • {currentUser.email}
               </p>
             </div>
           </div>
-          <button
+          {!forced && <button
             type="button"
             onClick={handleClose}
             className="p-1.5 text-theme-muted hover:text-theme-main rounded-xl hover:bg-theme-app transition-colors cursor-pointer"
             title="Fechar"
           >
             <X className="w-5 h-5" />
-          </button>
+          </button>}
         </div>
 
         {/* Content */}
         <div className="p-6 space-y-5">
+          {forced && !successMsg && (
+            <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs leading-relaxed font-medium">
+              Você entrou com uma senha provisória. Defina uma nova senha para continuar usando o sistema.
+            </div>
+          )}
           {errorMsg && (
             <div className="p-3.5 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-200 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
               <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
@@ -124,7 +131,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ isOpen
               <div className="space-y-1">
                 <h3 className="text-base font-bold text-theme-main">Senha Alterada com Sucesso!</h3>
                 <p className="text-xs text-emerald-400 font-semibold">{successMsg}</p>
-                <p className="text-[11px] text-theme-muted">Suas credenciais foram atualizadas no Supabase.</p>
+                <p className="text-[11px] text-theme-muted">As outras sessões abertas foram encerradas.</p>
               </div>
             </div>
           ) : (
@@ -167,7 +174,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ isOpen
                   htmlFor="change-new-pw" 
                   className="block text-xs font-semibold text-theme-muted mb-1.5"
                 >
-                  Nova Senha (mínimo 6 caracteres)
+                  Nova Senha (mínimo 8 caracteres)
                 </label>
                 <div className="relative">
                   <input
@@ -175,7 +182,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ isOpen
                     type={showNew ? 'text' : 'password'}
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="Mínimo de 6 dígitos"
+                    placeholder="Mínimo de 8 caracteres"
                     className="w-full bg-theme-app border border-theme focus:border-amber-400 focus:ring-2 focus:ring-amber-400/20 text-theme-main rounded-xl px-3.5 py-2.5 pl-10 pr-10 text-xs transition-all outline-none"
                     required
                     disabled={isLoading}
@@ -226,14 +233,14 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ isOpen
               </div>
 
               <div className="pt-2 flex items-center justify-end gap-2.5">
-                <button
+                {!forced && <button
                   type="button"
                   onClick={handleClose}
                   disabled={isLoading}
                   className="px-4 py-2.5 text-xs font-semibold text-theme-muted hover:text-theme-main rounded-xl transition-colors cursor-pointer"
                 >
                   Cancelar
-                </button>
+                </button>}
                 <button
                   type="submit"
                   disabled={isLoading}

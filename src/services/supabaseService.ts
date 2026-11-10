@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { createBackendDataClient } from './backendDataClient';
 import { 
   Student, 
   Instructor, 
@@ -284,23 +285,10 @@ CREATE INDEX IF NOT EXISTS idx_usuarios_email ON public.usuarios(email);
 CREATE INDEX IF NOT EXISTS idx_avaliacoes_student_id ON public.avaliacoes_desenvolvimento(student_id);
 CREATE INDEX IF NOT EXISTS idx_avaliacoes_data ON public.avaliacoes_desenvolvimento(data);
 
--- 14. POLÍTICAS DE PERMISSÃO E ROW LEVEL SECURITY (RLS)
--- Conceder permissões para a chave pública anon e para authenticated
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE 
-  public.alunos, 
-  public.professores, 
-  public.turmas, 
-  public.presencas,
-  public.graduacoes, 
-  public.pagamentos, 
-  public.planos_aula, 
-  public.tecnicas,
-  public.usuarios, 
-  public.configuracoes_academia, 
-  public.avaliacoes_desenvolvimento 
-TO anon, authenticated;
-
--- Habilitar RLS nas tabelas
+-- 14. ROW LEVEL SECURITY (RLS) — MODELO SEGURO
+-- O backend Express usa a service_role (somente no servidor) e ignora o RLS.
+-- O RLS fica ATIVO e SEM políticas para anon/authenticated nas tabelas sensíveis.
+-- NUNCA criar políticas USING (true) para anon/public e NUNCA desativar o RLS.
 ALTER TABLE public.alunos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.professores ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.turmas ENABLE ROW LEVEL SECURITY;
@@ -313,143 +301,21 @@ ALTER TABLE public.usuarios ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.configuracoes_academia ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.avaliacoes_desenvolvimento ENABLE ROW LEVEL SECURITY;
 
--- Limpar políticas antigas se existirem
-DO $$
-DECLARE policy_row RECORD;
-BEGIN
-  FOR policy_row IN
-    SELECT schemaname, tablename, policyname
-    FROM pg_policies
-    WHERE schemaname = 'public'
-      AND tablename IN ('alunos', 'professores', 'turmas', 'presencas', 'graduacoes',
-        'pagamentos', 'planos_aula', 'tecnicas', 'usuarios', 'configuracoes_academia',
-        'avaliacoes_desenvolvimento')
-  LOOP
-    EXECUTE format('DROP POLICY IF EXISTS %I ON %I.%I', policy_row.policyname, policy_row.schemaname, policy_row.tablename);
-  END LOOP;
-END $$;
+-- A tabela de usuários (hashes de senha) nunca é acessível pela chave pública
+REVOKE ALL ON TABLE public.usuarios FROM anon, authenticated;
 
--- Políticas para acesso público/anon e autenticado (compatível com chave anon do app)
-CREATE POLICY "anon_all_alunos" ON public.alunos FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "anon_all_professores" ON public.professores FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "anon_all_turmas" ON public.turmas FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "anon_all_presencas" ON public.presencas FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "anon_all_graduacoes" ON public.graduacoes FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "anon_all_pagamentos" ON public.pagamentos FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "anon_all_planos" ON public.planos_aula FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "anon_all_tecnicas" ON public.tecnicas FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "anon_all_config" ON public.configuracoes_academia FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "anon_all_avaliacoes" ON public.avaliacoes_desenvolvimento FOR ALL TO anon, authenticated USING (true) WITH CHECK (true);
-
--- Políticas da tabela usuarios:
--- 1. Permitir leitura para consulta de credenciais (email e password)
-CREATE POLICY "usuarios_select_policy" ON public.usuarios FOR SELECT TO anon, authenticated USING (true);
--- 2. Permitir inserção para novos cadastros (solicitação pendente)
-CREATE POLICY "usuarios_insert_policy" ON public.usuarios FOR INSERT TO anon, authenticated WITH CHECK (true);
--- 3. Permitir atualização para administradores aprovarem ou alterarem status
-CREATE POLICY "usuarios_update_policy" ON public.usuarios FOR UPDATE TO anon, authenticated USING (true) WITH CHECK (true);
--- 4. Permitir exclusão se necessário
-CREATE POLICY "usuarios_delete_policy" ON public.usuarios FOR DELETE TO anon, authenticated USING (true);
-
--- 15. FUNÇÃO E TRIGGER PARA GARANTIR VÍNCULO AUTOMÁTICO AO APROVAR USUÁRIO (IDEMPOTÊNCIA)
-CREATE OR REPLACE FUNCTION public.fn_garantir_vinculo_usuario()
-RETURNS TRIGGER AS $$
-DECLARE
-  v_prof_id TEXT;
-  v_aluno_id TEXT;
-BEGIN
-  -- Dispara apenas quando o usuário é aprovado
-  IF NEW.status = 'aprovado' AND (OLD.status IS NULL OR OLD.status != 'aprovado') THEN
-    IF NEW.role = 'professor' THEN
-      -- 1. Procura se já existe um professor com este ID ou e-mail
-      SELECT id INTO v_prof_id FROM public.professores 
-      WHERE (NEW.professor_id IS NOT NULL AND id = NEW.professor_id) 
-         OR (email IS NOT NULL AND LOWER(email) = LOWER(NEW.email))
-      LIMIT 1;
-
-      -- 2. Se não existir, cria o cadastro correspondente em public.professores
-      IF v_prof_id IS NULL THEN
-        v_prof_id := COALESCE(NEW.professor_id, 'inst-' || extract(epoch from now())::bigint::text);
-        INSERT INTO public.professores (id, nome, email, telefone, faixa, graus, sistema_graduacao)
-        VALUES (v_prof_id, NEW.nome, NEW.email, NEW.telefone, COALESCE(NEW.faixa, 'preta'), COALESCE(NEW.graus, 0), 'graus_e_faixas')
-        ON CONFLICT (id) DO NOTHING;
-      END IF;
-
-      NEW.professor_id := v_prof_id;
-
-    ELSIF NEW.role = 'aluno' THEN
-      -- 1. Procura se já existe um aluno com este ID ou e-mail
-      SELECT id INTO v_aluno_id FROM public.alunos 
-      WHERE (NEW.student_id IS NOT NULL AND id = NEW.student_id) 
-         OR (email IS NOT NULL AND LOWER(email) = LOWER(NEW.email))
-      LIMIT 1;
-
-      -- 2. Se não existir, cria o cadastro correspondente em public.alunos
-      IF v_aluno_id IS NULL THEN
-        v_aluno_id := COALESCE(NEW.student_id, 'aluno-' || extract(epoch from now())::bigint::text);
-        INSERT INTO public.alunos (id, nome, email, telefone, faixa, graus, data_inicio, plano, status_pagamento)
-        VALUES (v_aluno_id, NEW.nome, NEW.email, NEW.telefone, COALESCE(NEW.faixa, 'branca'), COALESCE(NEW.graus, 0), to_char(now(), 'YYYY-MM-DD'), 'Mensal', 'em_dia')
-        ON CONFLICT (id) DO NOTHING;
-      END IF;
-
-      NEW.student_id := v_aluno_id;
-    END IF;
-  END IF;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-DROP TRIGGER IF EXISTS trg_garantir_vinculo_usuario ON public.usuarios;
-CREATE TRIGGER trg_garantir_vinculo_usuario
-BEFORE UPDATE ON public.usuarios
-FOR EACH ROW
-EXECUTE FUNCTION public.fn_garantir_vinculo_usuario();
-
--- 16. FUNÇÃO PROTEGIDA DE APROVAÇÃO (SECURITY DEFINER)
-CREATE OR REPLACE FUNCTION public.aprovar_usuario(p_user_id TEXT)
-RETURNS jsonb AS $$
-DECLARE
-  v_user public.usuarios%ROWTYPE;
-BEGIN
-  UPDATE public.usuarios
-  SET status = 'aprovado'
-  WHERE id = p_user_id
-  RETURNING * INTO v_user;
-
-  IF NOT FOUND THEN
-    RETURN jsonb_build_object('success', false, 'error', 'Usuário não encontrado');
-  END IF;
-
-  RETURN jsonb_build_object(
-    'success', true, 
-    'user_id', v_user.id, 
-    'role', v_user.role, 
-    'status', v_user.status,
-    'professor_id', v_user.professor_id,
-    'student_id', v_user.student_id
-  );
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
+-- 15. CONTROLE DE SENHA, RECUPERAÇÃO E AUDITORIA
+-- Execute o arquivo server/db/migrations/2026-11-10_01_seguranca_usuarios.sql do projeto.
 
 -- ==============================================================================
--- INSTRUÇÃO PARA CRIAR O PRIMEIRO ADMINISTRADOR DIRETAMENTE NO BANCO:
--- Como não há mais acesso master automático nem bypass de login, execute o SQL abaixo
--- no Supabase SQL Editor para criar o seu primeiro usuário administrador:
+-- PRIMEIRO ADMINISTRADOR:
+-- Não grave senha pelo SQL Editor (o histórico de consultas guarda o texto).
+-- Cadastre-se pela tela de login (fica 'pendente') e, em seguida, promova a conta
+-- manualmente por SQL, sem tocar na senha:
 --
--- INSERT INTO public.usuarios (id, nome, email, password, role, status, is_master_admin)
--- VALUES (
---   'admin-inicial',
---   'Administrador Principal',
---   'admin@seu-dominio.com',
---   'SuaSenhaSegura@123',
---   'admin',
---   'aprovado',
---   true
--- )
--- ON CONFLICT (email) DO UPDATE 
--- SET password = EXCLUDED.password, status = 'aprovado', role = 'admin';
+-- UPDATE public.usuarios
+--    SET role = 'admin', status = 'ativo', is_master_admin = true
+--  WHERE id = '<ID_DO_USUARIO>';
 -- ==============================================================================
 `;
 
@@ -464,8 +330,6 @@ export const DEFAULT_SUPABASE_CONFIG: SupabaseConfig = {
   lastConnected: 'Conectado nativamente'
 };
 
-let cachedClient: SupabaseClient | null = null;
-let cachedConfigKey = '';
 
 export type SupabaseKeyType = 'anon' | 'service_role' | 'unknown' | 'empty';
 
@@ -557,38 +421,22 @@ export function isSecretApiKey(key?: string): boolean {
   return analyzeSupabaseKey(key).isSecret;
 }
 
+/**
+ * Cliente de dados do app.
+ *
+ * Desde 10/11/2026 o navegador NÃO acessa mais as tabelas do Supabase com a chave pública:
+ * todas as leituras e gravações passam pelo backend (/api/data/:tabela), que valida a sessão
+ * e aplica o escopo por papel. O objeto devolvido imita o subconjunto da API do supabase-js
+ * usado pelo app, por isso as funções existentes continuam funcionando sem alteração.
+ */
+const backendDataClient = createBackendDataClient();
+
 export function getSupabaseClient(config?: Partial<SupabaseConfig>): SupabaseClient | null {
-  const cleanUrl = (config?.url || DEFAULT_SUPABASE_URL).trim().replace(/\/+$/, '');
   const keyToUse = (config?.anonKey || DEFAULT_SUPABASE_ANON_KEY).trim();
-
-  if (!cleanUrl || !keyToUse) {
-    return null;
+  if (keyToUse && isSecretApiKey(keyToUse)) {
+    console.warn('Aviso: chave secreta configurada no navegador. Ela não é usada e deve ser removida das configurações.');
   }
-
-  if (isSecretApiKey(keyToUse)) {
-    console.warn('Aviso: Chave secreta detectada no navegador. O Supabase bloqueia requisições com chave secreta por segurança.');
-    return null;
-  }
-
-  const configKey = `${cleanUrl}_${keyToUse}`;
-
-  if (cachedClient && cachedConfigKey === configKey) {
-    return cachedClient;
-  }
-
-  try {
-    cachedClient = createClient(cleanUrl, keyToUse, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true
-      }
-    });
-    cachedConfigKey = configKey;
-    return cachedClient;
-  } catch (err) {
-    console.error('Erro ao inicializar Supabase Client:', err);
-    return null;
-  }
+  return backendDataClient as unknown as SupabaseClient;
 }
 
 export async function safeParseJsonResponse(response: Response): Promise<any> {
@@ -601,6 +449,39 @@ export async function safeParseJsonResponse(response: Response): Promise<any> {
   return null;
 }
 
+/**
+ * Converte o usuário devolvido pelo backend (snake_case) para AuthUser.
+ * isMasterAdmin vem SOMENTE de is_master_admin — ser admin não implica ser master.
+ * A interface apenas reflete o servidor; toda autorização é validada no backend.
+ */
+export function mapServerUserToAuthUser(u: any): AuthUser {
+  return {
+    id: u?.id || '',
+    nome: u?.nome || 'Usuário',
+    email: u?.email || '',
+    role: u?.role as UserRole,
+    isMasterAdmin: u?.is_master_admin === true || u?.isMasterAdmin === true,
+    professorId: u?.professor_id ?? u?.professorId ?? undefined,
+    studentId: u?.student_id ?? u?.studentId ?? undefined,
+    faixa: u?.faixa || undefined,
+    graus: u?.graus || 0,
+    status: u?.status || undefined,
+    telefone: u?.telefone || undefined,
+    permissions: u?.permissions || undefined,
+    mustChangePassword: u?.must_change_password === true || u?.mustChangePassword === true,
+    perfilSolicitado: u?.permissions?.perfil_solicitado || undefined,
+    createdAt: u?.created_at || u?.createdAt || undefined
+  };
+}
+
+/** Grava o token de sessão nas duas chaves usadas pelo app. */
+export function storeSessionToken(token: string): void {
+  try {
+    localStorage.setItem('ternatio_bjj_auth_token', token);
+    localStorage.setItem('bjjflow_token', token);
+  } catch {}
+}
+
 async function loadUserProfile(_client: SupabaseClient, authUserId: string, authEmail?: string): Promise<AuthUser> {
   const token = localStorage.getItem('ternatio_bjj_auth_token') || localStorage.getItem('bjjflow_token');
   if (token) {
@@ -611,20 +492,8 @@ async function loadUserProfile(_client: SupabaseClient, authUserId: string, auth
       if (resp.ok) {
         const data = await safeParseJsonResponse(resp);
         if (data && data.success && data.user) {
-          const isMaster = Boolean(data.user.is_master_admin || data.user.role === 'admin');
-          return {
-            id: data.user.id || authUserId,
-            nome: data.user.nome || 'Usuário',
-            email: data.user.email || authEmail || '',
-            role: data.user.role as UserRole,
-            isMasterAdmin: isMaster,
-            professorId: data.user.professor_id || undefined,
-            studentId: data.user.student_id || undefined,
-            faixa: data.user.faixa || undefined,
-            graus: data.user.graus || 0,
-            status: data.user.status || 'ativo',
-            permissions: data.user.permissions || undefined
-          };
+          const mapped = mapServerUserToAuthUser(data.user);
+          return { ...mapped, id: mapped.id || authUserId, email: mapped.email || authEmail || '' };
         }
       }
     } catch (err) {
@@ -1366,19 +1235,7 @@ export async function importAllFromSupabase(
         if (usersResp.ok) {
           const uJson = await safeParseJsonResponse(usersResp);
           if (uJson && uJson.success && Array.isArray(uJson.users)) {
-            allUsers = uJson.users.map((r: any) => ({
-              id: r.id,
-              nome: r.nome,
-              email: r.email,
-              role: r.role,
-              isMasterAdmin: Boolean(r.is_master_admin || r.role === 'admin'),
-              professorId: r.professor_id,
-              studentId: r.student_id,
-              faixa: r.faixa,
-              graus: r.graus || 0,
-              status: r.status,
-              permissions: r.permissions
-            }));
+            allUsers = uJson.users.map((r: any) => mapServerUserToAuthUser(r));
           }
         }
       } catch {
@@ -1627,16 +1484,11 @@ export async function authenticateUserWithSupabase(
     const resJson = await safeParseJsonResponse(response);
 
     if (resJson && response.ok && resJson.success && resJson.user) {
-      if (resJson.token) {
-        try {
-          localStorage.setItem('ternatio_bjj_auth_token', resJson.token);
-          localStorage.setItem('bjjflow_token', resJson.token);
-        } catch {}
-      }
+      if (resJson.token) storeSessionToken(resJson.token);
       return {
         success: true,
         message: resJson.message || 'Login realizado com sucesso.',
-        user: resJson.user,
+        user: mapServerUserToAuthUser(resJson.user),
         token: resJson.token
       };
     }
@@ -1676,8 +1528,8 @@ export async function registerNewUserInSupabase(
   if (!cleanEmail) {
     return { success: false, message: 'Informe um endereço de e-mail válido.' };
   }
-  if (!reg.password || reg.password.length < 6) {
-    return { success: false, message: 'A senha deve conter no mínimo 6 caracteres.' };
+  if (!reg.password || reg.password.length < 8) {
+    return { success: false, message: 'A senha deve conter no mínimo 8 caracteres.' };
   }
 
   try {
@@ -1688,6 +1540,7 @@ export async function registerNewUserInSupabase(
         nome: reg.nome.trim(),
         email: cleanEmail,
         password: reg.password,
+        confirmPassword: reg.confirmPassword,
         role: reg.role,
         telefone: reg.telefone?.trim(),
         faixa: reg.faixa,
@@ -1746,7 +1599,7 @@ export async function fetchUsersFromSupabase(
     }
 
     const data = await resp.json();
-    return { success: true, users: data.users || [] };
+    return { success: true, users: (data.users || []).map((r: any) => mapServerUserToAuthUser(r)) };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Falha de comunicação com a API de usuários.' };
   }
@@ -2009,8 +1862,8 @@ export async function changeUserPasswordInSupabase(
   newPassword: string
 ): Promise<{ success: boolean; message: string }> {
   try {
-    if (!newPassword || newPassword.length < 8) {
-      return { success: false, message: 'A nova senha deve possuir no mínimo 8 caracteres.' };
+    if (!newPassword || newPassword.length < 8 || newPassword.length > 72) {
+      return { success: false, message: 'A nova senha deve ter entre 8 e 72 caracteres.' };
     }
     if (!currentPassword) {
       return { success: false, message: 'A senha atual é obrigatória.' };
@@ -2034,6 +1887,8 @@ export async function changeUserPasswordInSupabase(
 
     const data = await safeParseJsonResponse(resp);
     if (resp.ok && data?.success) {
+      // A troca encerra as outras sessões; o servidor devolve um novo token para esta
+      if (data.token) storeSessionToken(data.token);
       return { success: true, message: data.message || 'Senha alterada com sucesso!' };
     }
 
@@ -2064,33 +1919,77 @@ export async function requestPasswordResetInSupabase(
 
   const [namePart, domainPart] = cleanEmail.split('@');
   const masked = (namePart.length > 2 ? namePart.slice(0, 2) + '***' : namePart + '***') + '@' + (domainPart || '');
+  const neutral = 'Se o e-mail estiver cadastrado, você receberá as instruções. Caso não receba em alguns minutos, procure a secretaria da academia.';
 
   try {
-    // Consulta via rota segura do backend
-    const resp = await fetch('/api/auth/recover-password', {
+    const resp = await fetch('/api/auth/forgot-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: cleanEmail })
     });
 
     const data = await safeParseJsonResponse(resp);
-    if (resp.ok && data?.success) {
-      return {
-        success: true,
-        userFound: true,
-        maskedEmail: masked,
-        message: data.message
-      };
+    if (resp.status === 429 || resp.status === 400) {
+      return { success: false, message: data?.message || 'Não foi possível processar a solicitação agora.' };
     }
-  } catch (err) {
+    if (resp.ok && data?.success) {
+      return { success: true, maskedEmail: masked, message: data.message || neutral };
+    }
+  } catch {
     // Falha silenciosa de transporte
   }
 
-  return {
-    success: true,
-    maskedEmail: masked,
-    message: `Se o e-mail ${cleanEmail} estiver cadastrado no sistema, a solicitação de redefinição foi registrada.`
-  };
+  return { success: true, maskedEmail: masked, message: neutral };
+}
+
+/**
+ * Conclui a redefinição de senha com o token recebido por e-mail (seção 9.2).
+ * Não faz login automático.
+ */
+export async function resetPasswordWithToken(
+  token: string,
+  newPassword: string
+): Promise<{ success: boolean; message: string }> {
+  try {
+    const resp = await fetch('/api/auth/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, newPassword })
+    });
+    const data = await safeParseJsonResponse(resp);
+    return {
+      success: Boolean(resp.ok && data?.success),
+      message: data?.message || (resp.ok ? 'Senha redefinida.' : 'Link inválido ou expirado.')
+    };
+  } catch {
+    return { success: false, message: 'Não foi possível conectar ao servidor. Tente novamente.' };
+  }
+}
+
+/**
+ * Reset assistido pelo administrador (seção 9.5): gera senha provisória exibida uma única vez.
+ */
+export async function adminResetUserPassword(
+  userId: string,
+  motivo: string
+): Promise<{ success: boolean; message: string; temporaryPassword?: string }> {
+  try {
+    const token = localStorage.getItem('ternatio_bjj_auth_token') || localStorage.getItem('bjjflow_token');
+    if (!token) return { success: false, message: 'Sessão não autenticada.' };
+
+    const resp = await fetch(`/api/users/${encodeURIComponent(userId)}/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ motivo })
+    });
+    const data = await safeParseJsonResponse(resp);
+    if (resp.ok && data?.success) {
+      return { success: true, message: data.message, temporaryPassword: data.temporaryPassword };
+    }
+    return { success: false, message: data?.error || data?.message || 'Não foi possível redefinir a senha.' };
+  } catch {
+    return { success: false, message: 'Falha de comunicação com o servidor.' };
+  }
 }
 
 // ==============================================================================

@@ -97,6 +97,10 @@ export interface AuthUser {
   telefone?: string;
   createdAt?: string;
   ultimoAcesso?: string;
+  /** Senha provisória: o servidor exige a troca antes de liberar o restante da API. */
+  mustChangePassword?: boolean;
+  /** Dados de perfil informados no cadastro (permissions.perfil_solicitado), para consulta na aprovação. */
+  perfilSolicitado?: Record<string, string | null>;
 }
 
 export interface UserRegistrationData {

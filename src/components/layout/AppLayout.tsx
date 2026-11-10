@@ -742,9 +742,10 @@ export const AppLayout: React.FC<{ children: React.ReactNode }> = ({ children })
       />
 
       {/* Change Password Modal */}
-      <ChangePasswordModal 
-        isOpen={changePasswordModalOpen} 
-        onClose={() => setChangePasswordModalOpen(false)} 
+      <ChangePasswordModal
+        isOpen={changePasswordModalOpen || currentUser.mustChangePassword === true}
+        onClose={() => setChangePasswordModalOpen(false)}
+        forced={currentUser.mustChangePassword === true}
       />
     </div>
   );

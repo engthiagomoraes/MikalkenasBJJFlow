@@ -84,7 +84,8 @@ import {
   saveSettingsToSupabase,
   DEFAULT_SUPABASE_CONFIG,
   DEFAULT_SUPABASE_URL,
-  DEFAULT_SUPABASE_ANON_KEY
+  DEFAULT_SUPABASE_ANON_KEY,
+  mapServerUserToAuthUser
 } from '../services/supabaseService';
 
 interface BjjContextType {
@@ -376,19 +377,7 @@ export const BjjProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
         const data = await safeParseJsonResponse(resp);
         if (data && data.success && data.user) {
-          const verifiedUser: AuthUser = {
-            id: data.user.id,
-            nome: data.user.nome,
-            email: data.user.email,
-            role: data.user.role as UserRole,
-            isMasterAdmin: Boolean(data.user.is_master_admin || data.user.role === 'admin'),
-            professorId: data.user.professor_id,
-            studentId: data.user.student_id,
-            faixa: data.user.faixa,
-            graus: data.user.graus || 0,
-            status: data.user.status,
-            permissions: data.user.permissions
-          };
+          const verifiedUser: AuthUser = mapServerUserToAuthUser(data.user);
           setCurrentUser(verifiedUser);
           setIsAuthenticated(true);
           saveToStorage('auth_user', verifiedUser);
@@ -781,7 +770,7 @@ export const BjjProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const updated = {
           ...u,
           role: newRole,
-          isMasterAdmin: newRole === 'admin',
+          isMasterAdmin: false, // a API nunca concede master; só por SQL manual
           permissions: { ...defaultPerms, ...(u.permissions || {}) }
         };
         if (currentUser.id === userId) {
@@ -820,13 +809,19 @@ export const BjjProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, message: 'Falha ao inicializar Supabase.' };
     }
 
-    return changeUserPasswordInSupabase(
+    const result = await changeUserPasswordInSupabase(
       client,
       currentUser.id,
       currentUser.email,
       currentPassword,
       newPassword
     );
+    if (result.success && currentUser.mustChangePassword) {
+      const cleared: AuthUser = { ...currentUser, mustChangePassword: false };
+      setCurrentUser(cleared);
+      saveToStorage('auth_user', cleared);
+    }
+    return result;
   };
 
   const requestPasswordReset = async (
@@ -1077,7 +1072,11 @@ export const BjjProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const addAttendance = async (studentId: string, classId: string, date?: string, time?: string): Promise<{ success: boolean; error?: string }> => {
     const student = students.find(s => s.id === studentId);
-    const turma = classes.find(c => c.id === classId) || classes[0];
+    const turma = classes.find(c => c.id === classId) || {
+      id: classId || 'turma-geral',
+      titulo: 'Turma Geral',
+      professorNome: academySettings.mestreResponsavel || 'Mestre Responsável'
+    };
     if (!student) return { success: false, error: 'Aluno não encontrado.' };
 
     const dateStr = date || new Date().toISOString().split('T')[0];
@@ -1096,7 +1095,37 @@ export const BjjProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       confirmadoPor: turma.professorNome
     };
 
-    if (supabaseConfig.url && supabaseConfig.anonKey) {
+    const authToken = localStorage.getItem('ternatio_bjj_auth_token') || localStorage.getItem('bjjflow_token');
+    if (authToken) {
+      try {
+        const resp = await fetch('/api/attendance', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`
+          },
+          body: JSON.stringify({
+            student_id: student.id,
+            turma_id: turma.id,
+            turma_titulo: turma.titulo,
+            data: dateStr,
+            horario: timeStr
+          })
+        });
+
+        if (!resp.ok) {
+          const errData = await resp.json().catch(() => ({}));
+          return { success: false, error: errData.error || 'Erro ao registrar presença no servidor.' };
+        }
+
+        const dataRes = await resp.json().catch(() => ({}));
+        if (dataRes?.record?.id) {
+          newRecord.id = dataRes.record.id;
+        }
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    } else if (supabaseConfig.url && supabaseConfig.anonKey) {
       const client = getSupabaseClient(supabaseConfig);
       if (client) {
         const res = await saveAttendanceToSupabase(client, newRecord);
@@ -1115,7 +1144,9 @@ export const BjjProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     } : s));
 
     // Automatically record techniques taught in that day's class plan
-    recordLearnedTechniquesForStudent(student.id, turma, dateStr);
+    if ('diaSemana' in turma) {
+      recordLearnedTechniquesForStudent(student.id, turma as ClassSchedule, dateStr);
+    }
     return { success: true };
   };
 
@@ -1123,7 +1154,21 @@ export const BjjProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const rec = attendance.find(a => a.id === attendanceId);
     if (!rec) return { success: false, error: 'Presença não encontrada.' };
 
-    if (supabaseConfig.url && supabaseConfig.anonKey) {
+    const authToken = localStorage.getItem('ternatio_bjj_auth_token') || localStorage.getItem('bjjflow_token');
+    if (authToken) {
+      try {
+        const resp = await fetch(`/api/attendance/${attendanceId}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${authToken}` }
+        });
+        if (!resp.ok) {
+          const errData = await resp.json().catch(() => ({}));
+          return { success: false, error: errData.error || 'Erro ao excluir presença no servidor.' };
+        }
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    } else if (supabaseConfig.url && supabaseConfig.anonKey) {
       const client = getSupabaseClient(supabaseConfig);
       if (client) {
         const res = await deleteAttendanceFromSupabase(client, attendanceId);
@@ -1633,7 +1678,7 @@ export const BjjProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const updatedCurrent: AuthUser = {
         ...currentUser,
         role: nextRole,
-        isMasterAdmin: nextRole === 'admin',
+        isMasterAdmin: currentUser.isMasterAdmin === true,
         permissions: nextPerms || (nextRole === 'admin' ? DEFAULT_ADMIN_PERMISSIONS : DEFAULT_PROFESSOR_PERMISSIONS),
         nome: updated.nome || currentUser.nome,
         email: profEmail,
@@ -1662,7 +1707,7 @@ export const BjjProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               faixa: updated.faixa || u.faixa,
               graus: updated.graus !== undefined ? Number(updated.graus) : u.graus,
               role: nextRole,
-              isMasterAdmin: nextRole === 'admin',
+              isMasterAdmin: u.isMasterAdmin === true,
               permissions: nextPerms || (nextRole === 'admin' ? DEFAULT_ADMIN_PERMISSIONS : DEFAULT_PROFESSOR_PERMISSIONS),
               professorId: id
             };
@@ -1675,9 +1720,9 @@ export const BjjProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           nome: updated.nome || existing.nome,
           email: profEmail,
           role: nextRole,
-          isMasterAdmin: nextRole === 'admin',
+          isMasterAdmin: false,
           permissions: nextPerms || (nextRole === 'admin' ? DEFAULT_ADMIN_PERMISSIONS : DEFAULT_PROFESSOR_PERMISSIONS),
-          status: 'aprovado',
+          status: 'ativo',
           professorId: id
         };
         return [newUser, ...prev];
@@ -1695,7 +1740,29 @@ export const BjjProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteInstructor = async (id: string): Promise<{ success: boolean; error?: string }> => {
-    if (supabaseConfig.url && supabaseConfig.anonKey) {
+    const target = instructors.find(i => i.id === id);
+    if (target) {
+      const email = (target.email || '').toLowerCase().trim();
+      if (email === 'professormikalkenasbjj@gmail.com' || target.nome?.toLowerCase().includes('edson mikalkenas')) {
+        return { success: false, error: 'O cadastro do Sensei Edson Mikalkenas é o perfil mestre da academia e não pode ser excluído.' };
+      }
+    }
+
+    const authToken = localStorage.getItem('ternatio_bjj_auth_token') || localStorage.getItem('bjjflow_token');
+    if (authToken) {
+      try {
+        const resp = await fetch(`/api/instructors/${id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${authToken}` }
+        });
+        if (!resp.ok) {
+          const errData = await resp.json().catch(() => ({}));
+          return { success: false, error: errData.error || 'Erro ao excluir professor no servidor.' };
+        }
+      } catch (err: any) {
+        return { success: false, error: err.message };
+      }
+    } else if (supabaseConfig.url && supabaseConfig.anonKey) {
       const client = getSupabaseClient(supabaseConfig);
       if (client) {
         const res = await deleteInstructorFromSupabase(client, id);

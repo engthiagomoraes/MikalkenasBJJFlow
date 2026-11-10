@@ -24,6 +24,7 @@ import { useBjj } from '../context/BjjContext';
 import { MikalkenasLogo } from '../components/ui/MikalkenasLogo';
 import { ThemeSelector } from '../components/ui/ThemeSelector';
 import { BeltColor, UserRole, UserRegistrationData } from '../types';
+import { resetPasswordWithToken } from '../services/supabaseService';
 
 export const Login: React.FC = () => {
   const { 
@@ -35,8 +36,58 @@ export const Login: React.FC = () => {
     authError 
   } = useBjj();
 
-  // Mode: 'login' | 'register' | 'recovery'
-  const [mode, setMode] = useState<'login' | 'register' | 'recovery'>('login');
+  // Token de redefinição recebido por e-mail (?reset_token=...)
+  const [resetToken] = useState<string>(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('reset_token') || '';
+    } catch {
+      return '';
+    }
+  });
+
+  // Mode: 'login' | 'register' | 'recovery' | 'reset'
+  const [mode, setMode] = useState<'login' | 'register' | 'recovery' | 'reset'>(() => (resetToken ? 'reset' : 'login'));
+
+  // Reset (link de e-mail) form state
+  const [resetNewPassword, setResetNewPassword] = useState('');
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('');
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [resetSuccess, setResetSuccess] = useState<string | null>(null);
+
+  const leaveResetMode = () => {
+    try {
+      // Remove o token da URL para não ficar no histórico/compartilhamento
+      window.history.replaceState({}, '', window.location.pathname);
+    } catch {}
+    setMode('login');
+  };
+
+  const handleResetSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetError(null);
+    if (resetNewPassword.length < 8 || resetNewPassword.length > 72) {
+      setResetError('A nova senha deve ter entre 8 e 72 caracteres.');
+      return;
+    }
+    if (resetNewPassword !== resetConfirmPassword) {
+      setResetError('A confirmação da nova senha não confere.');
+      return;
+    }
+    setResetLoading(true);
+    try {
+      const res = await resetPasswordWithToken(resetToken, resetNewPassword);
+      if (res.success) {
+        setResetSuccess(res.message);
+        setResetNewPassword('');
+        setResetConfirmPassword('');
+      } else {
+        setResetError(res.message);
+      }
+    } finally {
+      setResetLoading(false);
+    }
+  };
 
   // Login form state
   const [email, setEmail] = useState('');
@@ -62,7 +113,7 @@ export const Login: React.FC = () => {
   const [regFaixa, setRegFaixa] = useState<BeltColor>('branca');
   const [regGraus, setRegGraus] = useState<number>(0);
   const [regDataNasc, setRegDataNasc] = useState('');
-  const [regPlano, setRegPlano] = useState('regular');
+  const [regPlano, setRegPlano] = useState('Mensal');
   const [regTurmaPreferencia, setRegTurmaPreferencia] = useState('Geral / Mista');
   const [regRegistroCBJJ, setRegRegistroCBJJ] = useState('');
   const [regChavePix, setRegChavePix] = useState('');
@@ -148,8 +199,8 @@ export const Login: React.FC = () => {
       return;
     }
 
-    if (!regPassword || regPassword.length < 6) {
-      setRegError('A senha deve conter no mínimo 6 caracteres.');
+    if (!regPassword || regPassword.length < 8 || regPassword.length > 72) {
+      setRegError('A senha deve ter entre 8 e 72 caracteres.');
       return;
     }
 
@@ -164,6 +215,7 @@ export const Login: React.FC = () => {
         nome: cleanNome,
         email: cleanEmail,
         password: regPassword,
+        confirmPassword: regConfirmPassword,
         role: regRole,
         telefone: regTelefone.trim() || undefined,
         faixa: regFaixa,
@@ -532,7 +584,7 @@ export const Login: React.FC = () => {
                           type={showRegPassword ? 'text' : 'password'}
                           value={regPassword}
                           onChange={e => setRegPassword(e.target.value)}
-                          placeholder="Mínimo 6 dígitos"
+                          placeholder="Mínimo 8 caracteres"
                           className="w-full bg-theme-app border border-theme focus:border-amber-400 rounded-xl px-3 py-2 text-xs text-theme-main outline-none pr-8"
                           required
                         />
@@ -844,6 +896,94 @@ export const Login: React.FC = () => {
                       className="text-xs text-theme-muted hover:text-theme-main underline transition-colors cursor-pointer"
                     >
                       Lembrou sua senha? Voltar ao Login
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
+
+          {/* MODE 4: REDEFINIÇÃO DE SENHA (link recebido por e-mail) */}
+          {mode === 'reset' && (
+            <div className="space-y-5">
+              <div>
+                <h2 className="text-base font-bold text-theme-main flex items-center gap-2">
+                  <Key className="w-4 h-4 text-amber-500" />
+                  Definir Nova Senha
+                </h2>
+                <p className="text-xs text-theme-muted">
+                  O link vale por 30 minutos e só pode ser usado uma vez.
+                </p>
+              </div>
+
+              {resetError && (
+                <div className="p-3.5 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-200 text-xs flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <span className="leading-relaxed font-medium">{resetError}</span>
+                </div>
+              )}
+
+              {resetSuccess ? (
+                <div className="space-y-4 py-4 text-center">
+                  <div className="w-14 h-14 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 mx-auto flex items-center justify-center">
+                    <CheckCircle2 className="w-8 h-8" />
+                  </div>
+                  <p className="text-xs text-emerald-400 font-semibold leading-relaxed">{resetSuccess}</p>
+                  <button
+                    type="button"
+                    onClick={leaveResetMode}
+                    className="w-full bg-theme-accent hover:opacity-90 text-white font-bold text-xs py-3 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    <span>Ir para o Login</span>
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={handleResetSubmit} className="space-y-4">
+                  <div>
+                    <label htmlFor="reset-new-pw" className="block text-xs font-semibold text-theme-muted mb-1.5">
+                      Nova Senha (mínimo 8 caracteres)
+                    </label>
+                    <input
+                      id="reset-new-pw"
+                      type="password"
+                      autoComplete="new-password"
+                      value={resetNewPassword}
+                      onChange={(e) => setResetNewPassword(e.target.value)}
+                      className="w-full bg-theme-app border border-theme focus:border-amber-400 focus:ring-2 focus:ring-amber-400/20 text-theme-main rounded-xl px-3.5 py-3 text-sm transition-all outline-none"
+                      required
+                      disabled={resetLoading}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="reset-confirm-pw" className="block text-xs font-semibold text-theme-muted mb-1.5">
+                      Confirmar Nova Senha
+                    </label>
+                    <input
+                      id="reset-confirm-pw"
+                      type="password"
+                      autoComplete="new-password"
+                      value={resetConfirmPassword}
+                      onChange={(e) => setResetConfirmPassword(e.target.value)}
+                      className="w-full bg-theme-app border border-theme focus:border-amber-400 focus:ring-2 focus:ring-amber-400/20 text-theme-main rounded-xl px-3.5 py-3 text-sm transition-all outline-none"
+                      required
+                      disabled={resetLoading}
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={resetLoading}
+                    className="w-full bg-theme-accent hover:opacity-90 disabled:opacity-50 text-white font-black text-sm py-3 px-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    {resetLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>Salvar Nova Senha</span>}
+                  </button>
+                  <div className="text-center pt-2">
+                    <button
+                      type="button"
+                      onClick={leaveResetMode}
+                      className="text-xs text-theme-muted hover:text-theme-main underline transition-colors cursor-pointer"
+                    >
+                      Voltar ao Login
                     </button>
                   </div>
                 </form>

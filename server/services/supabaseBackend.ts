@@ -1,59 +1,69 @@
 import 'dotenv/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// URL e chave do projeto Mikalkenas Jiu Jitsu para o backend Express
-export const BACKEND_SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://rryyqwoygfwutnbxjrta.supabase.co';
-
 /**
- * A chave de serviço administrativa (SUPABASE_SERVICE_ROLE_KEY) é exclusiva do servidor backend.
- * NUNCA deve possuir o prefixo VITE_, impedindo estritamente que seja empacotada no bundle do cliente.
+ * Cliente Supabase do backend Express.
+ *
+ * Regras (instrucoes-seguranca-usuarios.md, seções 3.4, 10.1 e 12):
+ * - O backend usa EXCLUSIVAMENTE a chave de serviço (service_role / sb_secret_), que ignora o RLS.
+ * - A chave fica só no ambiente do servidor; nunca com prefixo VITE_ e nunca no código.
+ * - Sem fallback para a chave pública: com o RLS fechado ela retornaria vazio e o login
+ *   falharia de forma silenciosa ("usuário não encontrado" para todos).
  */
+
+export function getSupabaseUrl(): string | undefined {
+  const url = (process.env.SUPABASE_URL || '').trim();
+  return url || undefined;
+}
+
+export const BACKEND_SUPABASE_URL = getSupabaseUrl() || '';
+
 export function getServiceRoleKey(): string | undefined {
-  return (
+  const key = (
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.SUPABASE_SERVICE_KEY ||
     process.env.SUPABASE_SECRET_KEY ||
-    process.env.SERVICE_ROLE_KEY
-  );
+    ''
+  ).trim();
+  return key || undefined;
 }
 
 export function isServiceRoleConfigured(): boolean {
-  return Boolean(getServiceRoleKey());
+  const key = getServiceRoleKey();
+  // Rejeita chaves públicas configuradas por engano no lugar da chave de serviço
+  return Boolean(key && !key.startsWith('sb_publishable_'));
 }
 
-export const BACKEND_SUPABASE_KEY =
-  getServiceRoleKey() ||
-  process.env.SUPABASE_ANON_KEY ||
-  process.env.VITE_SUPABASE_ANON_KEY ||
-  'sb_publishable_THjyHMmIulOzc9fRokYL4Q_uaS9zpG8';
+/** Lança erro descritivo se a configuração do backend estiver incompleta. */
+export function assertBackendSupabaseConfig(): void {
+  if (!getSupabaseUrl()) {
+    throw new Error('Configuração: SUPABASE_URL ausente no ambiente do servidor.');
+  }
+  if (!isServiceRoleConfigured()) {
+    throw new Error(
+      'Configuração: SUPABASE_SERVICE_ROLE_KEY ausente ou inválida no ambiente do servidor. ' +
+      'O backend não opera com a chave pública (anon/publishable).'
+    );
+  }
+}
 
 let backendClient: SupabaseClient | null = null;
 let lastUsedKey: string | null = null;
 
 export function getBackendSupabaseClient(): SupabaseClient {
-  const currentUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://rryyqwoygfwutnbxjrta.supabase.co';
-  const serviceKey = getServiceRoleKey();
-  const currentKey =
-    serviceKey ||
-    process.env.SUPABASE_ANON_KEY ||
-    process.env.VITE_SUPABASE_ANON_KEY ||
-    'sb_publishable_THjyHMmIulOzc9fRokYL4Q_uaS9zpG8';
+  assertBackendSupabaseConfig();
+  const url = getSupabaseUrl() as string;
+  const key = getServiceRoleKey() as string;
 
-  const isServiceRole = Boolean(serviceKey);
-
-  if (!backendClient || lastUsedKey !== currentKey) {
-    if (!isServiceRole) {
-      console.warn('[BACKEND SUPABASE] Variável SUPABASE_SERVICE_ROLE_KEY não configurada. Backend operando com chave pública anon e autenticação resiliente.');
-    } else {
-      console.log('[BACKEND SUPABASE] Inicializado com chave privilegiada de serviço (bypass RLS ativo).');
-    }
-    backendClient = createClient(currentUrl, currentKey, {
+  if (!backendClient || lastUsedKey !== key) {
+    backendClient = createClient(url, key, {
       auth: {
         persistSession: false,
-        autoRefreshToken: false
+        autoRefreshToken: false,
+        detectSessionInUrl: false
       }
     });
-    lastUsedKey = currentKey;
+    lastUsedKey = key;
+    console.log('[BACKEND SUPABASE] Cliente inicializado com chave de serviço (somente servidor).');
   }
   return backendClient;
 }
@@ -64,17 +74,12 @@ export function getBackendSupabaseClient(): SupabaseClient {
 export async function checkDatabaseHealth(): Promise<{ ok: boolean; message: string; timestamp: string }> {
   try {
     const client = getBackendSupabaseClient();
-    // Verifica conectividade com uma tabela de acesso universal da academia
-    const { error } = await client.from('configuracoes_academia').select('id').limit(1);
+    const { error } = await client.from('usuarios').select('id', { head: true, count: 'exact' }).limit(1);
     if (error) {
-      // Fallback para tabela de professores se configuracoes_academia falhar
-      const { error: profErr } = await client.from('professores').select('id').limit(1);
-      if (profErr) {
-        return { ok: false, message: error.message || profErr.message, timestamp: new Date().toISOString() };
-      }
+      return { ok: false, message: 'Falha ao consultar o banco de dados.', timestamp: new Date().toISOString() };
     }
     return { ok: true, message: 'Conexão com o Supabase ativa e respondendo.', timestamp: new Date().toISOString() };
-  } catch (err: any) {
-    return { ok: false, message: err?.message || 'Erro inesperado ao consultar Supabase.', timestamp: new Date().toISOString() };
+  } catch {
+    return { ok: false, message: 'Backend sem configuração válida do Supabase.', timestamp: new Date().toISOString() };
   }
 }

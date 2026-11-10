@@ -123,18 +123,28 @@ export const Professores: React.FC = () => {
     setAccessRole('professor');
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!deletingInstructor) return;
     const profName = deletingInstructor.nome;
+    const profEmail = (deletingInstructor.email || '').toLowerCase().trim();
 
-    if (deletingInstructor.id === 'inst-thiago' || (instructors.length === 1 && deletingInstructor.id === instructors[0].id)) {
-      triggerToast('O Mestre Responsável principal não pode ser excluído diretamente enquanto for o único mestre ativo.', 'warning');
+    if (
+      profEmail === 'professormikalkenasbjj@gmail.com' ||
+      deletingInstructor.nome?.toLowerCase().includes('edson mikalkenas') ||
+      deletingInstructor.id === 'inst-thiago' ||
+      (instructors.length === 1 && deletingInstructor.id === instructors[0].id)
+    ) {
+      triggerToast('O Sensei Edson Mikalkenas / Mestre Principal não pode ser excluído do sistema.', 'warning');
       setDeletingInstructor(null);
       return;
     }
 
-    deleteInstructor(deletingInstructor.id);
-    triggerToast(`Professor "${profName}" excluído com sucesso do corpo docente.`);
+    const res = await deleteInstructor(deletingInstructor.id);
+    if (res && !res.success) {
+      triggerToast(res.error || 'Falha ao excluir professor.', 'warning');
+    } else {
+      triggerToast(`Professor "${profName}" excluído com sucesso do corpo docente.`);
+    }
     setDeletingInstructor(null);
   };
 

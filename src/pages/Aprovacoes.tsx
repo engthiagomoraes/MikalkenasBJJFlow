@@ -15,10 +15,21 @@ import {
   Phone,
   Calendar,
   Award,
-  BookOpen
+  BookOpen,
+  KeyRound
 } from 'lucide-react';
 import { useBjj } from '../context/BjjContext';
 import { AuthUser, UserStatus } from '../types';
+import { adminResetUserPassword } from '../services/supabaseService';
+
+const PERFIL_LABELS: Record<string, string> = {
+  registroCBJJ: 'Registro CBJJ',
+  chavePix: 'Chave PIX',
+  bio: 'Bio',
+  dataNascimento: 'Nascimento',
+  plano: 'Plano',
+  turmaPreferencia: 'Turma preferida'
+};
 
 export const Aprovacoes: React.FC = () => {
   const { 
@@ -38,6 +49,8 @@ export const Aprovacoes: React.FC = () => {
     type: 'success' | 'error';
     text: string;
   } | null>(null);
+  // Senha provisória exibida uma única vez (reset assistido)
+  const [tempPassword, setTempPassword] = useState<{ nome: string; value: string } | null>(null);
 
   // Security check: Only admins can view this screen
   if (currentUser.role !== 'admin') {
@@ -131,6 +144,27 @@ export const Aprovacoes: React.FC = () => {
     }
   };
 
+  const handleTempPassword = async (user: AuthUser) => {
+    const motivo = window.prompt(`Gerar senha provisória para "${user.nome}"?\nInforme o motivo (fica registrado na auditoria):`);
+    if (!motivo || motivo.trim().length < 5) {
+      if (motivo !== null) setFeedbackMessage({ type: 'error', text: 'Informe um motivo com pelo menos 5 caracteres.' });
+      return;
+    }
+    setActionLoadingId(user.id);
+    setFeedbackMessage(null);
+    setTempPassword(null);
+    try {
+      const res = await adminResetUserPassword(user.id, motivo.trim());
+      if (res.success && res.temporaryPassword) {
+        setTempPassword({ nome: user.nome, value: res.temporaryPassword });
+      } else {
+        setFeedbackMessage({ type: 'error', text: res.message });
+      }
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
   const filteredUsers = pendingUsers.filter(u => {
     const matchesSearch = 
       (u.nome && u.nome.toLowerCase().includes(searchTerm.toLowerCase())) ||
@@ -138,6 +172,7 @@ export const Aprovacoes: React.FC = () => {
       (u.role && u.role.toLowerCase().includes(searchTerm.toLowerCase()));
 
     if (filterStatus === 'todos') return matchesSearch;
+    if (filterStatus === 'aprovado') return matchesSearch && (u.status === 'aprovado' || u.status === 'ativo');
     return matchesSearch && (u.status === filterStatus || (!u.status && filterStatus === 'pendente'));
   });
 
@@ -145,6 +180,15 @@ export const Aprovacoes: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {tempPassword && (
+        <div className="p-4 rounded-2xl border border-amber-500/40 bg-amber-500/10 text-xs space-y-2">
+          <p className="font-bold text-amber-300">Senha provisória de "{tempPassword.nome}" — exibida apenas agora</p>
+          <p className="font-mono text-sm text-theme-main select-all break-all">{tempPassword.value}</p>
+          <p className="text-theme-muted">Entregue por canal seguro. Não registre em chat, print ou planilha. A troca será exigida no primeiro acesso.</p>
+          <button type="button" onClick={() => setTempPassword(null)} className="px-3 py-1.5 rounded-xl border border-theme text-theme-main font-semibold cursor-pointer">Ocultar</button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-theme-card border border-theme rounded-2xl p-6 shadow-sm">
         <div className="space-y-1">
@@ -372,6 +416,13 @@ export const Aprovacoes: React.FC = () => {
                     </div>
                   )}
 
+                  {isPending && user.perfilSolicitado && Object.entries(user.perfilSolicitado).filter(([, v]) => v).map(([k, v]) => (
+                    <div key={k} className="flex items-start gap-2 text-theme-muted col-span-2">
+                      <span>{PERFIL_LABELS[k] || k}:</span>
+                      <strong className="text-theme-main break-words">{String(v)}</strong>
+                    </div>
+                  ))}
+
                   {user.createdAt && (
                     <div className="flex items-center gap-2 text-theme-muted col-span-2">
                       <Calendar className="w-3.5 h-3.5 text-blue-500 shrink-0" />
@@ -413,17 +464,24 @@ export const Aprovacoes: React.FC = () => {
                   )}
 
                   {isRejected && (
+                    <span className="text-[11px] text-theme-muted">
+                      Cadastro reprovado. Só cadastros pendentes podem ser aprovados.
+                    </span>
+                  )}
+
+                  {isApproved && user.id !== currentUser.id && !user.isMasterAdmin && (user.role !== 'admin' || currentUser.isMasterAdmin) && (
                     <button
-                      onClick={() => handleApprove(user)}
+                      onClick={() => handleTempPassword(user)}
                       disabled={isUserActing}
-                      className="px-3.5 py-2 rounded-xl border border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      title="Reset assistido: gera uma senha provisória com troca obrigatória"
+                      className="px-3 py-1.5 rounded-xl border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                     >
-                      {isUserActing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UserCheck className="w-3.5 h-3.5" />}
-                      <span>Reverter para Aprovado</span>
+                      {isUserActing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <KeyRound className="w-3.5 h-3.5" />}
+                      <span>Senha provisória</span>
                     </button>
                   )}
 
-                  {isApproved && (
+                  {isApproved && user.id !== currentUser.id && !user.isMasterAdmin && (
                     <button
                       onClick={() => handleReject(user)}
                       disabled={isUserActing}

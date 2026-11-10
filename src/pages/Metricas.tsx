@@ -13,7 +13,8 @@ import {
   BarChart2,
   ChevronRight,
   Zap,
-  Sliders
+  Sliders,
+  UserRound
 } from 'lucide-react';
 import { useBjj } from '../context/BjjContext';
 import { BeltBadge } from '../components/ui/BeltBadge';
@@ -26,32 +27,32 @@ export const Metricas: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isEditingMetrics, setIsEditingMetrics] = useState<boolean>(false);
 
-  const selectedStudent = students.find(s => s.id === selectedStudentId) || students[0];
+  const selectedStudent = students.find(s => s.id === selectedStudentId) || (students.length > 0 ? students[0] : undefined);
 
   // Editable scores state
   const [scores, setScores] = useState({
-    guarda: selectedStudent?.performance.guarda || 8,
-    passagem: selectedStudent?.performance.passagem || 8,
-    quedas: selectedStudent?.performance.quedas || 7,
-    finalizacoes: selectedStudent?.performance.finalizacoes || 7.5,
-    defesa: selectedStudent?.performance.defesa || 8,
-    disciplina: selectedStudent?.performance.disciplina || 9.5
+    guarda: selectedStudent?.performance?.guarda ?? 8,
+    passagem: selectedStudent?.performance?.passagem ?? 8,
+    quedas: selectedStudent?.performance?.quedas ?? 7,
+    finalizacoes: selectedStudent?.performance?.finalizacoes ?? 7.5,
+    defesa: selectedStudent?.performance?.defesa ?? 8,
+    disciplina: selectedStudent?.performance?.disciplina ?? 9.5
   });
 
   // Keep scores in sync when selected student changes
   React.useEffect(() => {
-    if (selectedStudent) {
+    if (selectedStudent?.performance) {
       setScores({
-        guarda: selectedStudent.performance.guarda,
-        passagem: selectedStudent.performance.passagem,
-        quedas: selectedStudent.performance.quedas,
-        finalizacoes: selectedStudent.performance.finalizacoes,
-        defesa: selectedStudent.performance.defesa,
-        disciplina: selectedStudent.performance.disciplina
+        guarda: selectedStudent.performance.guarda ?? 8,
+        passagem: selectedStudent.performance.passagem ?? 8,
+        quedas: selectedStudent.performance.quedas ?? 7,
+        finalizacoes: selectedStudent.performance.finalizacoes ?? 7.5,
+        defesa: selectedStudent.performance.defesa ?? 8,
+        disciplina: selectedStudent.performance.disciplina ?? 9.5
       });
       setIsEditingMetrics(false);
     }
-  }, [selectedStudentId]);
+  }, [selectedStudentId, selectedStudent]);
 
   const handleSaveRatings = () => {
     if (!selectedStudent) return;
@@ -488,6 +489,16 @@ export const Metricas: React.FC = () => {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {!selectedStudent && (
+          <div className="lg:col-span-8 bg-white rounded-2xl p-12 border border-slate-200/80 text-center space-y-3">
+            <UserRound className="w-10 h-10 text-slate-300 mx-auto" />
+            <h4 className="text-base font-bold text-slate-800">Nenhum atleta selecionado</h4>
+            <p className="text-xs text-slate-500 max-w-sm mx-auto">
+              Cadastre alunos na equipe ou realize o upload da planilha para acompanhar os gráficos de desempenho e dimensões técnicas.
+            </p>
           </div>
         )}
       </div>

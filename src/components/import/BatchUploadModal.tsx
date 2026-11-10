@@ -163,15 +163,12 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
 
           // Email
           const rawEmail = getVal(row, ['email', 'e-mail', 'correio']);
-          let email = rawEmail;
-          if (!email) {
-            email = `${rawNome.toLowerCase().replace(/[^a-z0-9]/g, '.')}@informar.com`;
-            missingFieldsDetected++;
-          }
+          const email = rawEmail ? rawEmail.toLowerCase().trim() : '';
+          if (!rawEmail) missingFieldsDetected++;
 
           // Telefone
           const rawTel = getVal(row, ['telefone', 'fone', 'celular', 'whatsapp', 'tel']);
-          const telefone = rawTel || 'informar';
+          const telefone = rawTel ? rawTel.trim() : '';
           if (!rawTel) missingFieldsDetected++;
 
           // Faixa
@@ -201,8 +198,7 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
 
           // Tamanho Kimono
           const rawKimono = getVal(row, ['kimono', 'tamanho_kimono', 'tamanho']);
-          const tamanhoKimono = rawKimono || 'informar';
-          if (!rawKimono) missingFieldsDetected++;
+          const tamanhoKimono = rawKimono || 'A2';
 
           // Peso Kg
           const rawPeso = getVal(row, ['peso', 'peso_kg', 'kg']);
@@ -210,21 +206,20 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
 
           // Turma preferida
           const rawTurma = getVal(row, ['turma', 'turma_preferida', 'horario']);
-          const turmaPreferida = rawTurma || 'informar';
-          if (!rawTurma) missingFieldsDetected++;
+          const turmaPreferida = rawTurma || 'Geral';
 
           // Professor
           const rawProf = getVal(row, ['professor', 'mestre', 'instrutor', 'prof']);
-          const matchedProf = instructors.find(inst => 
-            (rawProf && inst.nome.toLowerCase().includes(rawProf.toLowerCase())) ||
-            (rawProf && inst.id === rawProf)
-          ) || instructors[0];
+          const matchedProf = rawProf ? instructors.find(inst => 
+            inst.nome.toLowerCase().includes(rawProf.toLowerCase()) ||
+            inst.id === rawProf
+          ) : undefined;
 
           parsed.push({
             nome: rawNome,
             email,
             telefone,
-            dataNascimento: getVal(row, ['nascimento', 'data_nascimento']) || 'informar',
+            dataNascimento: getVal(row, ['nascimento', 'data_nascimento']) || '',
             dataInicio: getVal(row, ['inicio', 'data_inicio']) || todayStr,
             faixa,
             graus,
@@ -238,8 +233,8 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
             pesoKg,
             turmaPreferida,
             professorId: matchedProf?.id,
-            professorNome: matchedProf?.nome || 'Thiago Lopes de Moraes Silva',
-            observacoesMedicas: getVal(row, ['observacao', 'medica', 'obs']) || 'informar'
+            professorNome: matchedProf?.nome || (academySettings.mestreResponsavel || ''),
+            observacoesMedicas: getVal(row, ['observacao', 'medica', 'obs']) || ''
           });
         }
 
@@ -259,24 +254,24 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
           if (!nome) continue;
 
           const rawEmail = getVal(row, ['email', 'e-mail']);
-          const email = rawEmail || `${nome.toLowerCase().replace(/[^a-z0-9]/g, '.')}@informar.com`;
+          const email = rawEmail ? rawEmail.toLowerCase().trim() : '';
           if (!rawEmail) missingFieldsDetected++;
 
           const rawTel = getVal(row, ['telefone', 'fone', 'celular', 'whatsapp']);
-          const telefone = rawTel || 'informar';
+          const telefone = rawTel ? rawTel.trim() : '';
           if (!rawTel) missingFieldsDetected++;
 
           const rawFaixa = normalize(getVal(row, ['faixa', 'belt']));
           const faixa: BeltColor = validBelts.includes(rawFaixa as BeltColor) ? (rawFaixa as BeltColor) : 'preta';
 
           const graus = parseInt(getVal(row, ['graus', 'grau'])) || 1;
-          const registroCBJJ = getVal(row, ['cbjj', 'registro', 'federacao']) || 'informar';
-          const bio = getVal(row, ['bio', 'biografia', 'sobre']) || 'informar';
-          const chavePix = getVal(row, ['pix', 'chave_pix']) || email || 'informar';
-          const banco = getVal(row, ['banco', 'conta']) || 'informar';
+          const registroCBJJ = getVal(row, ['cbjj', 'registro', 'federacao']) || '';
+          const bio = getVal(row, ['bio', 'biografia', 'sobre']) || '';
+          const chavePix = getVal(row, ['pix', 'chave_pix']) || email || '';
+          const banco = getVal(row, ['banco', 'conta']) || '';
 
           const rawTurmas = getVal(row, ['turmas', 'aulas']);
-          const turmasList = rawTurmas ? rawTurmas.split(';').map(t => t.trim()) : ['informar'];
+          const turmasList = rawTurmas ? rawTurmas.split(';').map(t => t.trim()) : [];
 
           parsed.push({
             nome,
@@ -307,11 +302,8 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
           const titulo = getVal(row, ['titulo', 'turma', 'nome']) || row[0];
           if (!titulo) continue;
 
-          const diaSemana = getVal(row, ['dia', 'dias', 'dia_semana']) || 'informar';
-          if (diaSemana === 'informar') missingFieldsDetected++;
-
-          const horario = getVal(row, ['horario', 'hora', 'tempo']) || 'informar';
-          if (horario === 'informar') missingFieldsDetected++;
+          const diaSemana = getVal(row, ['dia', 'dias', 'dia_semana']) || 'Segunda a Sexta';
+          const horario = getVal(row, ['horario', 'hora', 'tempo']) || '19:30';
 
           const rawCat = getVal(row, ['categoria', 'nivel']);
           let categoria: ClassSchedule['categoria'] = 'Iniciante';
@@ -322,10 +314,10 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
           else if (rawCat.includes('Open')) categoria = 'Open Mat';
 
           const profNomeOrId = getVal(row, ['professor', 'mestre', 'instrutor']);
-          const matchedProf = instructors.find(inst => 
+          const matchedProf = profNomeOrId ? instructors.find(inst => 
             inst.nome.toLowerCase().includes(profNomeOrId.toLowerCase()) || 
             inst.id === profNomeOrId
-          ) || instructors[0];
+          ) : instructors.find(i => i.nome.toLowerCase().includes('edson')) || instructors[0];
 
           const sala = getVal(row, ['sala', 'tatame', 'espaco']) || 'Tatame 1 (Principal)';
 
@@ -334,8 +326,8 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
             diaSemana,
             horario,
             categoria,
-            professorId: matchedProf ? matchedProf.id : 'inst-thiago',
-            professorNome: matchedProf ? matchedProf.nome : 'Thiago Lopes de Moraes Silva',
+            professorId: matchedProf?.id || (instructors[0]?.id || 'inst-edson'),
+            professorNome: matchedProf?.nome || (academySettings.mestreResponsavel || ''),
             sala
           });
         }
@@ -369,14 +361,14 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
           const tipo = rawTipo.includes('No-Gi') ? 'No-Gi' : rawTipo.includes('Gi') ? 'Gi' : 'Ambos';
 
           const rawDesc = getVal(row, ['descricao', 'explicacao']);
-          const descricao = rawDesc || 'informar';
+          const descricao = rawDesc || '';
           if (!rawDesc) missingFieldsDetected++;
 
           const rawPontos = getVal(row, ['pontos_chave', 'detalhes', 'passos']);
-          const pontosChave = rawPontos ? rawPontos.split(/;|\n/).map(p => p.trim()).filter(Boolean) : ['informar'];
+          const pontosChave = rawPontos ? rawPontos.split(/;|\n/).map(p => p.trim()).filter(Boolean) : [];
 
           const rawTags = getVal(row, ['tags', 'marcadores']);
-          const tags = rawTags ? rawTags.split(/;|,/).map(t => t.trim()).filter(Boolean) : ['BJJ', 'informar'];
+          const tags = rawTags ? rawTags.split(/;|,/).map(t => t.trim()).filter(Boolean) : ['BJJ'];
 
           parsed.push({
             titulo,
@@ -407,27 +399,31 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
           const matchedStudent = students.find(s => 
             s.nome.toLowerCase().includes(studentQuery.toLowerCase()) || 
             s.id === studentQuery
-          ) || students[0];
+          );
+
+          if (!matchedStudent) {
+            throw new Error(`Aluno "${studentQuery}" na linha ${i + 1} não foi localizado no cadastro da academia. Cadastre o aluno antes de importar suas presenças.`);
+          }
 
           const classQuery = getVal(row, ['turma', 'aula', 'class']);
-          const matchedClass = classes.find(c => 
+          const matchedClass = classQuery ? classes.find(c => 
             c.titulo.toLowerCase().includes(classQuery.toLowerCase()) || 
             c.id === classQuery
-          ) || classes[0];
+          ) : classes[0];
 
           const data = getVal(row, ['data', 'date', 'dia']) || todayStr;
           const horario = getVal(row, ['horario', 'hora', 'time']) || '19:00';
 
           parsed.push({
-            studentId: matchedStudent?.id || 'aluno-informar',
-            studentNome: matchedStudent?.nome || studentQuery,
-            studentFaixa: matchedStudent?.faixa || 'branca',
-            studentGraus: matchedStudent?.graus || 0,
-            turmaId: matchedClass?.id || 'turma-informar',
+            studentId: matchedStudent.id,
+            studentNome: matchedStudent.nome,
+            studentFaixa: matchedStudent.faixa || 'branca',
+            studentGraus: matchedStudent.graus || 0,
+            turmaId: matchedClass?.id || 'turma-geral',
             turmaTitulo: matchedClass?.titulo || classQuery || 'Jiu-Jitsu Geral',
             data,
             horario,
-            confirmadoPor: matchedClass?.professorNome || 'Thiago Lopes de Moraes Silva'
+            confirmadoPor: matchedClass?.professorNome || academySettings.mestreResponsavel || 'Administração'
           });
         }
 
@@ -450,10 +446,14 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
             s.id === studentQuery
           );
 
-          const mesReferencia = getVal(row, ['mes', 'mes_referencia', 'referencia']) || 'Outubro/2026';
+          if (!matchedStudent) {
+            throw new Error(`Aluno "${studentQuery}" na linha ${i + 1} não foi localizado no cadastro da academia. Cadastre o aluno antes de importar lançamentos financeiros.`);
+          }
+
+          const mesReferencia = getVal(row, ['mes', 'mes_referencia', 'referencia']) || 'Mês Atual';
           const rawValor = getVal(row, ['valor', 'mensalidade', 'preco']);
-          const valor = parseFloat(rawValor.replace('R$', '').replace(',', '.')) || matchedStudent?.valorMensalidade || 180;
-          const dataVencimento = getVal(row, ['vencimento', 'data_vencimento']) || `2026-10-10`;
+          const valor = parseFloat(rawValor.replace('R$', '').replace(',', '.')) || matchedStudent.valorMensalidade || 180;
+          const dataVencimento = getVal(row, ['vencimento', 'data_vencimento']) || todayStr;
 
           const rawStatus = normalize(getVal(row, ['status', 'situacao']));
           let status: PaymentStatus = 'pendente';
@@ -461,21 +461,21 @@ export const BatchUploadModal: React.FC<BatchUploadModalProps> = ({
           else if (rawStatus.includes('atras')) status = 'atrasado';
           else if (rawStatus.includes('isent')) status = 'isento';
 
-          const prof = instructors.find(i => i.id === matchedStudent?.professorId) || instructors[0];
+          const prof = matchedStudent.professorId ? instructors.find(i => i.id === matchedStudent.professorId) : undefined;
 
           parsed.push({
-            studentId: matchedStudent?.id || 'aluno-informar',
-            studentNome: matchedStudent?.nome || studentQuery,
-            plano: matchedStudent?.plano || 'regular',
+            studentId: matchedStudent.id,
+            studentNome: matchedStudent.nome,
+            plano: matchedStudent.plano || 'regular',
             mesReferencia,
             valor,
-            valorOriginal: 180,
-            desconto: Math.max(0, 180 - valor),
+            valorOriginal: matchedStudent.valorMensalidade || 180,
+            desconto: Math.max(0, (matchedStudent.valorMensalidade || 180) - valor),
             dataVencimento,
             status,
             professorId: prof?.id,
-            professorNome: prof?.nome,
-            chavePixProfessor: prof?.chavePix
+            professorNome: prof?.nome || matchedStudent.professorNome || academySettings.mestreResponsavel || '',
+            chavePixProfessor: prof?.chavePix || academySettings.chavePix || ''
           });
         }
 

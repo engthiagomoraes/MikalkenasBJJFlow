@@ -34,7 +34,7 @@ export const Produtos: React.FC = () => {
 
   const isProfessor = currentUser.role === 'professor';
   const isStudent = currentUser.role === 'aluno';
-  const currentStudent = students.find(s => s.id === currentUser.studentId) || students[0];
+  const currentStudent = currentUser.studentId ? students.find(s => s.id === currentUser.studentId) : undefined;
 
   const myStudents = isProfessor 
     ? students.filter(s => s.professorId === currentUser.professorId || (s.professorNome && s.professorNome.toLowerCase() === currentUser.nome.toLowerCase()))
@@ -383,9 +383,10 @@ export const Produtos: React.FC = () => {
                     </div>
                   ) : (
                     <button
-                      onClick={() => addPurchase(prod.id, currentStudent.id)}
-                      disabled={prod.estoque <= 0}
-                      className="text-xs font-bold bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white px-3 py-1.5 rounded-lg flex items-center gap-1"
+                      onClick={() => currentStudent && addPurchase(prod.id, currentStudent.id)}
+                      disabled={prod.estoque <= 0 || !currentStudent}
+                      title={!currentStudent ? 'Matrícula não vinculada' : undefined}
+                      className="text-xs font-bold bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 dark:disabled:bg-slate-700 text-white px-3 py-1.5 rounded-lg flex items-center gap-1"
                     >
                       <ShoppingBag className="w-3.5 h-3.5" /> Comprar
                     </button>

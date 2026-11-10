@@ -4,15 +4,15 @@ import { authenticateToken } from '../middleware/authMiddleware';
 
 const router = Router();
 
-// Rotas públicas de autenticação e recuperação
+// Rotas públicas (com rate limit no controller)
 router.post('/login', AuthController.login);
 router.post('/register', AuthController.register);
-router.post('/recover-password', AuthController.recoverPassword);
+router.post('/forgot-password', AuthController.recoverPassword);
+router.post('/recover-password', AuthController.recoverPassword); // alias legado
+router.post('/reset-password', AuthController.resetPassword);
 
-// Rotas de verificação de sessão e troca de senha protegidas por Bearer
+// Rotas protegidas por Bearer
 router.get('/me', authenticateToken, AuthController.me);
 router.post('/change-password', authenticateToken, AuthController.changePassword);
 
 export default router;
-
-

@@ -663,7 +663,7 @@ export const SupabaseConfigTab: React.FC = () => {
                 Como Criar Todas as Tabelas no seu Supabase
               </h4>
               <p className="text-xs text-slate-300 mt-1 max-w-2xl">
-                O script oficial cria as 10 tabelas, políticas de segurança Row Level Security (RLS), índices de velocidade e cadastra seu usuário como <strong>Administrador Master</strong> (Thiago Lopes de Moraes Silva).
+                O script oficial cria as tabelas, ativa o Row Level Security (RLS) sem acesso público às tabelas sensíveis e cria os índices. O <strong>Administrador Master</strong> é definido apenas por SQL manual, sem gravar senha no SQL Editor.
               </p>
             </div>
 

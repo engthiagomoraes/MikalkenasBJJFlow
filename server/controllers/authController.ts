@@ -1,381 +1,475 @@
 import { Request, Response } from 'express';
-import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { getBackendSupabaseClient } from '../services/supabaseBackend';
 import { AuthenticatedRequest } from '../middleware/authMiddleware';
-import { DEFAULT_ADMIN_PERMISSIONS, DEFAULT_PROFESSOR_PERMISSIONS, DEFAULT_STUDENT_PERMISSIONS } from './usersController';
+import { generateSessionToken } from '../services/session';
+import {
+  audit,
+  blockedStatusMessage,
+  consumeRateLimit,
+  fetchUserBy,
+  getClientIp,
+  hashPassword,
+  isStatusAllowed,
+  isUndefinedColumnError,
+  isUndefinedTableError,
+  isValidEmail,
+  markOptionalColumns,
+  normalizeEmail,
+  normalizePhone,
+  resetRateLimit,
+  sanitizeBelt,
+  sanitizeDegrees,
+  sanitizeShortText,
+  sha256Hex,
+  validateName,
+  validatePasswordPolicy,
+  verifyPassword
+} from '../services/security';
 
-/**
- * Validação rigorosa de SESSION_SECRET.
- * Aborta se não estiver configurado com segredo forte (mínimo 32 caracteres).
- */
-export function getSessionSecret(): string {
-  const secret = process.env.SESSION_SECRET || 'mikalkenas_jiu_jitsu_session_secret_jwt_hmac_256_production_safe_key_2026';
-  return secret.trim();
+// Reexportações para compatibilidade com imports existentes
+export { getSessionSecret, generateSessionToken, verifySessionToken } from '../services/session';
+
+const GENERIC_LOGIN_ERROR = 'E-mail ou senha inválidos.';
+const NEUTRAL_REGISTER_ERROR =
+  'Não foi possível concluir o cadastro. Se você já tem conta, use Entrar ou Recuperar senha.';
+const NEUTRAL_RECOVERY_MESSAGE =
+  'Se o e-mail estiver cadastrado, você receberá as instruções. Caso não receba em alguns minutos, procure a secretaria da academia.';
+
+/** Campos devolvidos ao cliente após login / em /me (5.1, passo 7). Nunca inclui password. */
+const PUBLIC_USER_COLUMNS =
+  'id, nome, email, role, status, is_master_admin, professor_id, student_id, faixa, graus, telefone, permissions';
+
+const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
+
+function toPublicUser(row: any, hasOptionalColumns: boolean) {
+  return {
+    id: row.id,
+    nome: row.nome,
+    email: row.email,
+    role: row.role,
+    status: row.status,
+    is_master_admin: row.is_master_admin === true,
+    professor_id: row.professor_id ?? null,
+    student_id: row.student_id ?? null,
+    faixa: row.faixa ?? null,
+    graus: row.graus ?? 0,
+    telefone: row.telefone ?? '',
+    permissions: row.permissions ?? null,
+    must_change_password: hasOptionalColumns ? row.must_change_password === true : false
+  };
 }
 
-/**
- * Emite token de sessão assinado com HMAC-SHA256
- * Formato: base64(userId:email:role:timestamp:nonce:signature)
- */
-export function generateSessionToken(userId: string, email: string, role: string): string {
-  const secret = getSessionSecret();
-  const timestamp = Date.now().toString();
-  const nonce = crypto.randomBytes(16).toString('hex');
-  const payload = `${userId}:${email}:${role}:${timestamp}:${nonce}`;
-  const signature = crypto.createHmac('sha256', secret).update(payload).digest('hex');
-  return Buffer.from(`${payload}:${signature}`).toString('base64');
-}
-
-/**
- * Validação resistente a timing attacks, formato e expiração de sessão
- */
-export function verifySessionToken(token: string): { valid: boolean; userId?: string; email?: string; role?: string } {
+/** Envio de e-mail transacional via Resend (HTTP), se configurado. */
+async function sendResetEmail(to: string, nome: string, link: string): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+  const from = process.env.EMAIL_FROM;
+  if (!apiKey || !from) return false;
   try {
-    if (!token || typeof token !== 'string') return { valid: false };
-
-    const decoded = Buffer.from(token, 'base64').toString('utf8');
-    const parts = decoded.split(':');
-    if (parts.length !== 6) return { valid: false };
-
-    const [userId, email, role, timestampStr, nonce, signature] = parts;
-    if (!userId || !email || !role || !timestampStr || !nonce || !signature) {
-      return { valid: false };
-    }
-
-    const issueTime = parseInt(timestampStr, 10);
-    if (isNaN(issueTime)) return { valid: false };
-
-    const now = Date.now();
-    // Rejeitar timestamps no futuro (tolerância de relógio de 5 minutos)
-    if (issueTime > now + 5 * 60 * 1000) return { valid: false };
-
-    // Validar expiração (7 dias)
-    const maxAgeMs = 7 * 24 * 60 * 60 * 1000;
-    if (now - issueTime > maxAgeMs) return { valid: false };
-
-    const secret = getSessionSecret();
-    const payload = `${userId}:${email}:${role}:${timestampStr}:${nonce}`;
-    const expectedSig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
-
-    // Comparação em tempo constante (timingSafeEqual)
-    const sigBuffer = Buffer.from(signature, 'hex');
-    const expectedBuffer = Buffer.from(expectedSig, 'hex');
-
-    if (sigBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(sigBuffer, expectedBuffer)) {
-      return { valid: false };
-    }
-
-    return { valid: true, userId, email, role };
-  } catch {
-    return { valid: false };
-  }
-}
-
-// Rate limiters simples em memória para proteção contra brute-force
-const loginAttempts = new Map<string, { count: number; resetTime: number }>();
-const changePasswordAttempts = new Map<string, { count: number; resetTime: number }>();
-const recoveryAttempts = new Map<string, { count: number; resetTime: number }>();
-
-function checkRateLimit(map: Map<string, { count: number; resetTime: number }>, key: string, maxAttempts: number, windowMs: number): boolean {
-  const now = Date.now();
-  const entry = map.get(key);
-  if (!entry || now > entry.resetTime) {
-    map.set(key, { count: 1, resetTime: now + windowMs });
-    return true;
-  }
-  if (entry.count >= maxAttempts) {
+    const resp = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from,
+        to: [to],
+        subject: 'Redefinição de senha',
+        text:
+          `Olá, ${nome}.\n\nRecebemos um pedido para redefinir sua senha. ` +
+          `Use o link abaixo em até 30 minutos (uso único):\n\n${link}\n\n` +
+          `Se você não fez este pedido, ignore este e-mail.`
+      })
+    });
+    if (!resp.ok) console.error('[RECOVERY] Provedor de e-mail respondeu HTTP', resp.status);
+    return resp.ok;
+  } catch (err: any) {
+    console.error('[RECOVERY] Falha ao enviar e-mail:', err?.message);
     return false;
   }
-  entry.count++;
-  return true;
 }
 
 export class AuthController {
   /**
-   * Endpoint de validação de login seguro com migração progressiva para bcrypt
+   * POST /auth/login — fluxo da seção 5.1.
    */
   static async login(req: Request, res: Response): Promise<void> {
-    const { email, password } = req.body;
-    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'ip';
-    const rateLimitKey = `${clientIp}:${String(email || '').toLowerCase().trim()}`;
+    const ip = getClientIp(req);
+    const cleanEmail = normalizeEmail(req.body?.email);
+    const password = req.body?.password;
+    const rlKey = `${ip}:${cleanEmail}`;
 
-    if (!checkRateLimit(loginAttempts, rateLimitKey, 10, 15 * 60 * 1000)) {
-      res.status(429).json({
-        success: false,
-        message: 'Muitas tentativas de login com erro. Aguarde 15 minutos antes de tentar novamente.'
-      });
+    if (!consumeRateLimit('login', rlKey, 5, 15 * 60 * 1000) || !consumeRateLimit('login-ip', ip, 30, 15 * 60 * 1000)) {
+      res.status(429).json({ success: false, message: 'Muitas tentativas. Aguarde 15 minutos antes de tentar novamente.' });
       return;
     }
 
-    if (!email || !password) {
-      res.status(401).json({ success: false, message: 'E-mail ou senha inválidos.' });
+    if (!isValidEmail(cleanEmail) || typeof password !== 'string' || !password || password.length > 200) {
+      await verifyPassword('x', null); // iguala tempo de resposta
+      res.status(401).json({ success: false, message: GENERIC_LOGIN_ERROR });
+      return;
+    }
+
+    let client;
+    try {
+      client = getBackendSupabaseClient();
+    } catch (cfgErr: any) {
+      console.error('[AUTH CONFIG ERROR]', cfgErr?.message);
+      res.status(503).json({ success: false, message: 'Serviço de autenticação temporariamente indisponível.' });
       return;
     }
 
     try {
-      const client = getBackendSupabaseClient();
-      const cleanEmail = String(email).toLowerCase().trim();
-
-      let { data: user, error } = await client
-        .from('usuarios')
-        .select('*')
-        .ilike('email', cleanEmail)
-        .maybeSingle();
+      const { data: user, error, hasOptionalColumns } = await fetchUserBy(
+        client,
+        'email',
+        cleanEmail,
+        `${PUBLIC_USER_COLUMNS}, password`
+      );
 
       if (error) {
-        console.error('[AUTH DB ERROR] Falha ao consultar tabela usuarios no Supabase:', error.code, error.message);
-        res.status(503).json({
-          success: false,
-          message: 'Serviço de autenticação temporariamente indisponível. Não foi possível consultar o perfil autorizado no banco de dados.',
-          error_code: 'DATABASE_QUERY_ERROR'
-        });
+        console.error('[AUTH DB ERROR] Falha ao consultar usuarios:', error.code);
+        res.status(503).json({ success: false, message: 'Serviço de autenticação temporariamente indisponível.' });
         return;
       }
 
-      if (!user) {
-        res.status(401).json({ success: false, message: 'E-mail ou senha inválidos.' });
+      // Sempre executa bcrypt (hash falso se o usuário não existir) para igualar o tempo
+      const passwordMatches = await verifyPassword(password, user?.password);
+
+      if (!user || !passwordMatches) {
+        await audit(client, { action: 'login_falha', email: cleanEmail, ip, targetId: user?.id ?? null });
+        res.status(401).json({ success: false, message: GENERIC_LOGIN_ERROR });
         return;
       }
 
-      let passwordMatches = false;
-      const storedCred = user.password || '';
-
-      if (storedCred.startsWith('$2a$') || storedCred.startsWith('$2b$') || storedCred.startsWith('$2y$')) {
-        try {
-          passwordMatches = bcrypt.compareSync(password, storedCred);
-        } catch (bcryptErr: any) {
-          console.error('[AUTH BCRYPT ERROR] Erro na verificação do hash bcrypt:', bcryptErr?.message);
-          passwordMatches = false;
-        }
-      } else {
-        // Validação legada (somente para contas ainda não migradas)
-        if (storedCred === password || (storedCred && storedCred === String(password).trim())) {
-          passwordMatches = true;
-        }
-      }
-
-      // Se a credencial não conferir diretamente com o hash/senha de public.usuarios,
-      // tenta validar via Supabase Auth. Os privilégios (role, is_master_admin, permissions)
-      // continuam derivando ESTRITAMENTE do registro autorizado 'user' em public.usuarios.
-      if (!passwordMatches) {
-        try {
-          const { data: authData, error: authErr } = await client.auth.signInWithPassword({
-            email: cleanEmail,
-            password
-          });
-          if (!authErr && authData?.user) {
-            passwordMatches = true;
-          }
-        } catch {}
-      }
-
-      if (!passwordMatches) {
-        res.status(401).json({ success: false, message: 'E-mail ou senha inválidos.' });
+      // Só após a senha conferir, avalia o status
+      if (!isStatusAllowed(user.status)) {
+        await audit(client, { action: 'login_bloqueado_status', email: cleanEmail, ip, targetId: user.id, details: { status: user.status } });
+        res.status(403).json({ success: false, message: blockedStatusMessage(user.status) });
         return;
       }
 
-      // Login bem-sucedido: limpa contador de tentativas de brute-force
-      loginAttempts.delete(rateLimitKey);
+      resetRateLimit('login', rlKey);
+      const token = generateSessionToken(user.id);
+      await audit(client, { action: 'login_sucesso', email: cleanEmail, ip, actorId: user.id, targetId: user.id });
 
-      if (user.status === 'pendente') {
-        res.status(403).json({ success: false, message: 'Cadastro em análise. Aguarde a aprovação de um administrador.' });
-        return;
-      }
-
-      if (user.status === 'reprovado' || user.status === 'inativo') {
-        res.status(403).json({ success: false, message: 'Acesso não liberado. Entre em contato com a administração.' });
-        return;
-      }
-
-
-
-      const sessionToken = generateSessionToken(user.id, user.email, user.role);
-      const { password: _, ...safeUser } = user;
-
+      const safeUser = toPublicUser(user, hasOptionalColumns);
       res.json({
         success: true,
         message: `Bem-vindo, ${safeUser.nome}!`,
-        token: sessionToken,
+        token,
         user: safeUser
       });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: 'Erro ao autenticar no servidor.', details: err?.message });
+      console.error('[AUTH LOGIN ERROR]', err?.message);
+      res.status(500).json({ success: false, message: 'Erro ao autenticar no servidor.' });
     }
   }
 
   /**
-   * Endpoint de cadastro de novo usuário com criptografia bcrypt imediata no backend
+   * POST /auth/register — seção 7. O servidor decide papel, status e privilégios.
    */
   static async register(req: Request, res: Response): Promise<void> {
-    const { 
-      nome, 
-      email, 
-      password, 
-      role, 
-      telefone, 
-      faixa, 
-      graus,
-      dataNascimento,
-      plano,
-      turmaPreferencia,
-      registroCBJJ,
-      chavePix,
-      bio
-    } = req.body;
-
-    if (!nome || !email || !password) {
-      res.status(400).json({ success: false, message: 'Nome, e-mail e senha são obrigatórios.' });
+    const ip = getClientIp(req);
+    if (!consumeRateLimit('register', ip, 5, 60 * 60 * 1000)) {
+      res.status(429).json({ success: false, message: 'Muitas solicitações de cadastro. Tente novamente mais tarde.' });
       return;
     }
 
-    const cleanEmail = String(email).toLowerCase().trim();
-    if (password.length < 6) {
-      res.status(400).json({ success: false, message: 'A senha deve possuir no mínimo 6 caracteres.' });
+    const body = req.body || {};
+
+    const nameCheck = validateName(body.nome);
+    if (!nameCheck.ok) {
+      res.status(400).json({ success: false, message: nameCheck.message });
       return;
     }
+
+    const cleanEmail = normalizeEmail(body.email);
+    if (!isValidEmail(cleanEmail)) {
+      res.status(400).json({ success: false, message: 'Informe um endereço de e-mail válido.' });
+      return;
+    }
+
+    const passCheck = validatePasswordPolicy(body.password, { email: cleanEmail, nome: nameCheck.value });
+    if (!passCheck.ok) {
+      res.status(400).json({ success: false, message: passCheck.message });
+      return;
+    }
+    if (body.confirmPassword !== undefined && body.confirmPassword !== body.password) {
+      res.status(400).json({ success: false, message: 'A senha e a confirmação não coincidem.' });
+      return;
+    }
+
+    const phoneCheck = normalizePhone(body.telefone);
+    if (!phoneCheck.ok) {
+      res.status(400).json({ success: false, message: phoneCheck.message });
+      return;
+    }
+
+    if (body.role !== undefined && body.role !== 'professor' && body.role !== 'aluno') {
+      res.status(400).json({ success: false, message: 'Papel solicitado inválido. Use professor ou aluno.' });
+      return;
+    }
+    // Nunca 'admin'; qualquer status/permissions/is_master_admin/vínculo do corpo é ignorado (mass assignment)
+    const safeRole: 'aluno' | 'professor' = body.role === 'professor' ? 'professor' : 'aluno';
+
+    // Opção B (7.4): dados de perfil solicitados ficam em permissions.perfil_solicitado até a aprovação
+    const perfilSolicitado =
+      safeRole === 'professor'
+        ? {
+            registroCBJJ: sanitizeShortText(body.registroCBJJ, 60),
+            chavePix: sanitizeShortText(body.chavePix, 120),
+            bio: sanitizeShortText(body.bio, 1000)
+          }
+        : {
+            dataNascimento: sanitizeShortText(body.dataNascimento, 10),
+            plano: sanitizeShortText(body.plano, 40),
+            turmaPreferencia: sanitizeShortText(body.turmaPreferencia, 120)
+          };
 
     try {
       const client = getBackendSupabaseClient();
-      const { data: existing } = await client
+
+      const { data: existing, error: existErr } = await client
         .from('usuarios')
         .select('id')
-        .ilike('email', cleanEmail)
-        .maybeSingle();
+        .eq('email', cleanEmail)
+        .limit(1);
 
-      if (existing) {
-        res.status(400).json({ success: false, message: 'Este endereço de e-mail já está cadastrado no sistema.' });
+      if (existErr) {
+        console.error('[AUTH REGISTER] Falha ao verificar e-mail:', existErr.code);
+        res.status(503).json({ success: false, message: 'Serviço temporariamente indisponível. Tente novamente.' });
         return;
       }
 
-      const hashedPassword = bcrypt.hashSync(password, 12);
-      const newUserId = `user-${Date.now()}`;
+      if (existing && existing.length > 0) {
+        res.status(409).json({ success: false, message: NEUTRAL_REGISTER_ERROR });
+        return;
+      }
 
-      // Metadados complementares salvos em permissions para integridade máxima
-      const extraMetadata: Record<string, any> = {
-        telefone: telefone ? String(telefone).trim() : null,
-        dataNascimento: dataNascimento || null,
-        plano: plano || null,
-        turmaPreferencia: turmaPreferencia || null,
-        registroCBJJ: registroCBJJ || null,
-        chavePix: chavePix || null,
-        bio: bio || null
-      };
-
-      // Tenta primeiro inserir com a coluna telefone caso ela exista na tabela do Supabase
-      const fullRow: Record<string, any> = {
+      const newUserId = `user-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+      const row = {
         id: newUserId,
-        nome: String(nome).trim(),
+        nome: nameCheck.value,
         email: cleanEmail,
-        password: hashedPassword,
-        role: role === 'professor' ? 'professor' : 'aluno',
+        password: await hashPassword(body.password),
+        role: safeRole,
         status: 'pendente',
-        telefone: telefone ? String(telefone).trim() : null,
-        faixa: faixa || (role === 'professor' ? 'preta' : 'branca'),
-        graus: Number(graus || 0),
+        telefone: phoneCheck.value,
+        faixa: sanitizeBelt(body.faixa, safeRole === 'professor' ? 'preta' : 'branca'),
+        graus: sanitizeDegrees(body.graus) ?? 0,
         is_master_admin: false,
-        permissions: extraMetadata,
+        permissions: { perfil_solicitado: perfilSolicitado },
+        professor_id: null,
+        student_id: null,
         created_at: new Date().toISOString()
       };
 
-      let { error: insErr } = await client.from('usuarios').insert([fullRow]);
-
-      // Se falhar porque a coluna 'telefone' não existe no cache do Supabase:
-      if (insErr && (insErr.message?.includes('telefone') || insErr.message?.includes('schema cache'))) {
-        console.warn('[AUTH REGISTER] Coluna telefone não encontrada na tabela usuarios. Executando inserção resiliente com metadados em permissions...');
-        const resilientRow = { ...fullRow };
-        delete resilientRow.telefone;
-        const retry = await client.from('usuarios').insert([resilientRow]);
-        insErr = retry.error;
-      }
+      // Escrita única: sem registro parcial em caso de falha
+      const { error: insErr } = await client.from('usuarios').insert([row]);
 
       if (insErr) {
-        console.error('[AUTH REGISTER ERROR]', insErr);
-        res.status(500).json({ success: false, message: `Erro ao salvar cadastro: ${insErr.message}` });
+        if (insErr.code === '23505') {
+          res.status(409).json({ success: false, message: NEUTRAL_REGISTER_ERROR });
+          return;
+        }
+        console.error('[AUTH REGISTER] Falha no insert:', insErr.code, insErr.message);
+        res.status(500).json({ success: false, message: 'Não foi possível salvar o cadastro agora. Tente novamente mais tarde.' });
         return;
       }
 
+      await audit(client, {
+        action: 'cadastro',
+        targetId: newUserId,
+        email: cleanEmail,
+        ip,
+        after: { role: safeRole, status: 'pendente' }
+      });
+
       res.status(201).json({
         success: true,
-        message: 'Cadastro realizado com sucesso! Aguarde a aprovação do administrador para acessar o sistema.'
+        message: 'Cadastro recebido. Aguarde a aprovação da academia.'
       });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: 'Erro interno ao realizar cadastro.', details: err?.message });
+      console.error('[AUTH REGISTER ERROR]', err?.message);
+      res.status(500).json({ success: false, message: 'Erro interno ao realizar cadastro.' });
     }
   }
 
   /**
-   * Endpoint de solicitação de recuperação de senha com honestidade técnica
+   * POST /auth/forgot-password (alias /auth/recover-password) — seção 9.1.
+   * Resposta sempre igual, exista a conta ou não.
    */
   static async recoverPassword(req: Request, res: Response): Promise<void> {
-    const { email } = req.body;
-    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'ip';
-    const rateLimitKey = `${clientIp}:${String(email || '').toLowerCase().trim()}`;
+    const ip = getClientIp(req);
+    const cleanEmail = normalizeEmail(req.body?.email);
 
-    if (!checkRateLimit(recoveryAttempts, rateLimitKey, 3, 60 * 60 * 1000)) {
-      res.status(429).json({
-        success: false,
-        message: 'Limite de solicitações de recuperação atingido. Tente novamente mais tarde.'
-      });
+    if (!consumeRateLimit('recovery-ip', ip, 10, 60 * 60 * 1000) || !consumeRateLimit('recovery-email', cleanEmail || ip, 3, 60 * 60 * 1000)) {
+      res.status(429).json({ success: false, message: 'Limite de solicitações atingido. Tente novamente mais tarde.' });
       return;
     }
 
-    if (!email) {
-      res.status(400).json({ success: false, message: 'Informe o endereço de e-mail cadastrado.' });
+    if (!isValidEmail(cleanEmail)) {
+      res.status(400).json({ success: false, message: 'Informe um endereço de e-mail válido.' });
+      return;
+    }
+
+    // Resposta enviada sempre com o mesmo conteúdo
+    const respond = () => res.json({ success: true, message: NEUTRAL_RECOVERY_MESSAGE });
+
+    try {
+      const client = getBackendSupabaseClient();
+      const { data: user } = await client
+        .from('usuarios')
+        .select('id, email, nome, status')
+        .eq('email', cleanEmail)
+        .maybeSingle();
+
+      await audit(client, { action: 'recuperacao_solicitada', email: cleanEmail, ip, targetId: user?.id ?? null });
+
+      // Só contas liberadas recebem link
+      if (!user || !isStatusAllowed(user.status)) {
+        respond();
+        return;
+      }
+
+      const appUrl = (process.env.APP_URL || '').replace(/\/+$/, '');
+      const emailConfigured = Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM && appUrl);
+      if (!emailConfigured) {
+        console.warn('[RECOVERY] Envio de e-mail não configurado (RESEND_API_KEY/EMAIL_FROM/APP_URL). Use o reset assistido pelo admin.');
+        respond();
+        return;
+      }
+
+      // Invalida pedidos anteriores do mesmo usuário
+      const nowIso = new Date().toISOString();
+      const invalidate = await client
+        .from('password_resets')
+        .update({ used_at: nowIso })
+        .eq('user_id', user.id)
+        .is('used_at', null);
+
+      if (invalidate.error) {
+        if (isUndefinedTableError(invalidate.error)) {
+          console.warn('[RECOVERY] Tabela password_resets ausente. Aplique a migração de segurança.');
+        } else {
+          console.error('[RECOVERY] Falha ao invalidar tokens:', invalidate.error.code);
+        }
+        respond();
+        return;
+      }
+
+      const rawToken = crypto.randomBytes(32).toString('hex');
+      const { error: insErr } = await client.from('password_resets').insert([{
+        user_id: user.id,
+        token_hash: sha256Hex(rawToken),
+        expires_at: new Date(Date.now() + RESET_TOKEN_TTL_MS).toISOString()
+      }]);
+
+      if (insErr) {
+        console.error('[RECOVERY] Falha ao gravar token:', insErr.code);
+        respond();
+        return;
+      }
+
+      await sendResetEmail(user.email, user.nome, `${appUrl}/?reset_token=${rawToken}`);
+      respond();
+    } catch (err: any) {
+      console.error('[RECOVERY ERROR]', err?.message);
+      respond();
+    }
+  }
+
+  /**
+   * POST /auth/reset-password — seção 9.2. Sem login automático.
+   */
+  static async resetPassword(req: Request, res: Response): Promise<void> {
+    const ip = getClientIp(req);
+    if (!consumeRateLimit('reset', ip, 10, 15 * 60 * 1000)) {
+      res.status(429).json({ success: false, message: 'Muitas tentativas. Aguarde alguns minutos.' });
+      return;
+    }
+
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    const newPassword = req.body?.newPassword;
+    const invalidLink = () => res.status(400).json({ success: false, message: 'Link inválido ou expirado. Solicite uma nova recuperação.' });
+
+    if (!/^[a-f0-9]{64}$/.test(token)) {
+      invalidLink();
       return;
     }
 
     try {
       const client = getBackendSupabaseClient();
-      const cleanEmail = String(email).toLowerCase().trim();
+      const nowIso = new Date().toISOString();
+
+      const { data: resetRow, error: findErr } = await client
+        .from('password_resets')
+        .select('id, user_id, expires_at, used_at')
+        .eq('token_hash', sha256Hex(token))
+        .is('used_at', null)
+        .gt('expires_at', nowIso)
+        .maybeSingle();
+
+      if (findErr || !resetRow) {
+        invalidLink();
+        return;
+      }
 
       const { data: user } = await client
         .from('usuarios')
-        .select('id, email, nome')
-        .ilike('email', cleanEmail)
+        .select('id, nome, email, status')
+        .eq('id', resetRow.user_id)
         .maybeSingle();
 
-      const hasEmailService = Boolean(process.env.SMTP_HOST || process.env.RESEND_API_KEY);
-
-      if (user && hasEmailService) {
-        const resetToken = crypto.randomBytes(32).toString('hex');
-        const tokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
-        const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-
-        try {
-          await client.from('password_reset_tokens').insert({
-            user_id: user.id,
-            token_hash: tokenHash,
-            expires_at: expiresAt,
-            used: false
-          });
-        } catch {
-          // Token table might not exist yet; gracefully handled
-        }
+      if (!user || !isStatusAllowed(user.status)) {
+        invalidLink();
+        return;
       }
 
-      // Resposta transparente e honesta
-      if (hasEmailService) {
-        res.json({
-          success: true,
-          emailConfigured: true,
-          message: `Se o e-mail ${cleanEmail} estiver cadastrado no sistema, as orientações de redefinição foram encaminhadas.`
-        });
-      } else {
-        res.json({
-          success: true,
-          emailConfigured: false,
-          message: `Solicitação registrada para ${cleanEmail}. O envio automatizado de e-mail está inativo no servidor (requer configuração de SMTP/Resend pelo administrador). Por favor, solicite a redefinição diretamente à secretaria da academia.`
-        });
+      const passCheck = validatePasswordPolicy(newPassword, { email: user.email, nome: user.nome });
+      if (!passCheck.ok) {
+        res.status(400).json({ success: false, message: passCheck.message });
+        return;
       }
+
+      // Consome o token (uso único) antes de gravar a senha
+      const { data: claimed, error: claimErr } = await client
+        .from('password_resets')
+        .update({ used_at: nowIso })
+        .eq('id', resetRow.id)
+        .is('used_at', null)
+        .select('id');
+
+      if (claimErr || !claimed || claimed.length !== 1) {
+        invalidLink();
+        return;
+      }
+
+      const { data: updated, error: updErr } = await client
+        .from('usuarios')
+        .update({
+          password: await hashPassword(newPassword),
+          password_changed_at: new Date().toISOString(),
+          must_change_password: false
+        })
+        .eq('id', user.id)
+        .select('id');
+
+      if (updErr || !updated || updated.length !== 1) {
+        console.error('[RESET PASSWORD] Falha ao gravar senha:', updErr?.code);
+        res.status(500).json({ success: false, message: 'Não foi possível redefinir a senha. Solicite um novo link.' });
+        return;
+      }
+
+      await audit(client, { action: 'recuperacao_concluida', actorId: user.id, targetId: user.id, email: user.email, ip });
+      res.json({ success: true, message: 'Senha redefinida com sucesso. Entre com a nova senha.' });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: 'Erro ao processar solicitação de recuperação.' });
+      console.error('[RESET PASSWORD ERROR]', err?.message);
+      res.status(500).json({ success: false, message: 'Erro interno ao redefinir senha.' });
     }
   }
 
   /**
-   * Endpoint de validação de sessão ativa (/api/auth/me)
-   * Valida a assinatura do token e retorna dados atualizados do banco
+   * GET /auth/me — sessão validada pelo middleware; dados recarregados do banco.
    */
   static async me(req: AuthenticatedRequest, res: Response): Promise<void> {
     if (!req.user) {
@@ -385,60 +479,43 @@ export class AuthController {
 
     try {
       const client = getBackendSupabaseClient();
-
-      const { data: user, error } = await client
-        .from('usuarios')
-        .select('*')
-        .eq('id', req.user.id)
-        .maybeSingle();
+      const { data: user, error, hasOptionalColumns } = await fetchUserBy(client, 'id', req.user.id, PUBLIC_USER_COLUMNS);
 
       if (error || !user) {
-        // Se a tabela usuarios estiver inacessível ou o usuário não constar no registro autorizado,
-        // nega o acesso de forma segura em vez de sintetizar privilégios.
-        res.status(401).json({ success: false, message: 'Sessão revogada ou perfil autorizado indisponível no banco de dados.' });
+        res.status(401).json({ success: false, message: 'Sessão revogada.' });
         return;
       }
 
-      res.json({ success: true, user });
+      res.json({ success: true, user: toPublicUser(user, hasOptionalColumns) });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: 'Erro ao validar sessão.', details: err?.message });
+      console.error('[AUTH ME ERROR]', err?.message);
+      res.status(500).json({ success: false, message: 'Erro ao validar sessão.' });
     }
   }
 
   /**
-   * Endpoint de alteração de senha de usuário autenticado
-   * Identifica a conta EXCLUSIVAMENTE pela sessão verificada no servidor (req.user.id).
+   * POST /auth/change-password — seção 9.3.
+   * Conta identificada EXCLUSIVAMENTE pela sessão (req.user.id). Exige a senha atual.
+   * Atualiza password_changed_at (invalida as outras sessões) e devolve um novo token.
    */
   static async changePassword(req: AuthenticatedRequest, res: Response): Promise<void> {
     const verifiedUserId = req.user?.id;
-
     if (!verifiedUserId) {
-      res.status(401).json({ success: false, message: 'Acesso negado. Usuário não autenticado.' });
+      res.status(401).json({ success: false, message: 'Não autenticado.' });
       return;
     }
 
-    const { currentPassword, newPassword } = req.body;
-    const rateLimitKey = `pwd_change:${verifiedUserId}`;
-
-    if (!checkRateLimit(changePasswordAttempts, rateLimitKey, 5, 15 * 60 * 1000)) {
-      res.status(429).json({
-        success: false,
-        message: 'Muitas tentativas incorretas de alteração de senha. Aguarde 15 minutos.'
-      });
+    if (!consumeRateLimit('pwd-change', verifiedUserId, 5, 15 * 60 * 1000)) {
+      res.status(429).json({ success: false, message: 'Muitas tentativas. Aguarde 15 minutos.' });
       return;
     }
 
-    if (!currentPassword) {
+    const { currentPassword, newPassword } = req.body || {};
+
+    if (typeof currentPassword !== 'string' || !currentPassword) {
       res.status(400).json({ success: false, message: 'A senha atual é obrigatória.' });
       return;
     }
-
-    // Política de senha: mínimo 8 caracteres, complexidade básica
-    if (!newPassword || newPassword.length < 8) {
-      res.status(400).json({ success: false, message: 'A nova senha deve possuir no mínimo 8 caracteres.' });
-      return;
-    }
-
     if (currentPassword === newPassword) {
       res.status(400).json({ success: false, message: 'A nova senha deve ser diferente da senha atual.' });
       return;
@@ -449,68 +526,71 @@ export class AuthController {
 
       const { data: user, error: fetchErr } = await client
         .from('usuarios')
-        .select('id, password, email')
+        .select('id, nome, email, password')
         .eq('id', verifiedUserId)
         .maybeSingle();
 
       if (fetchErr || !user) {
-        res.status(404).json({ success: false, message: 'Usuário não encontrado no banco de dados.' });
+        res.status(401).json({ success: false, message: 'Sessão revogada.' });
         return;
       }
 
-      const storedCred = user.password || '';
-      let currentMatches = false;
-
-      if (storedCred.startsWith('$2a$') || storedCred.startsWith('$2b$') || storedCred.startsWith('$2y$')) {
-        try {
-          currentMatches = bcrypt.compareSync(currentPassword, storedCred);
-        } catch {
-          currentMatches = false;
-        }
-      } else {
-        currentMatches = storedCred === currentPassword;
+      const passCheck = validatePasswordPolicy(newPassword, { email: user.email, nome: user.nome });
+      if (!passCheck.ok) {
+        res.status(400).json({ success: false, message: passCheck.message });
+        return;
       }
 
-      if (!currentMatches) {
+      if (!(await verifyPassword(currentPassword, user.password))) {
         res.status(401).json({ success: false, message: 'A senha atual informada está incorreta.' });
         return;
       }
 
-      // Limpa contador de tentativas
-      changePasswordAttempts.delete(rateLimitKey);
+      resetRateLimit('pwd-change', verifiedUserId);
 
-      // Criptografar nova senha com bcrypt (12 rounds)
-      const saltRounds = 12;
-      const hashedNewPassword = bcrypt.hashSync(newPassword, saltRounds);
+      const basePayload: Record<string, unknown> = { password: await hashPassword(newPassword) };
+      const fullPayload = { ...basePayload, password_changed_at: new Date().toISOString(), must_change_password: false };
 
-      // Atualização com verificação de erro explícita e proteção de concorrência
-      const { data: updateData, error: updErr } = await client
+      // Proteção de concorrência: só altera se o hash ainda for o mesmo lido acima
+      let result = await client
         .from('usuarios')
-        .update({ password: hashedNewPassword })
+        .update(fullPayload)
         .eq('id', verifiedUserId)
-        .eq('password', storedCred)
+        .eq('password', user.password)
         .select('id');
 
-      if (updErr) {
-        res.status(500).json({ success: false, message: `Erro ao gravar nova senha no banco: ${updErr.message}` });
+      if (result.error && isUndefinedColumnError(result.error)) {
+        markOptionalColumns(false);
+        result = await client
+          .from('usuarios')
+          .update(basePayload)
+          .eq('id', verifiedUserId)
+          .eq('password', user.password)
+          .select('id');
+      }
+
+      if (result.error) {
+        console.error('[CHANGE PASSWORD] Falha ao gravar:', result.error.code);
+        res.status(500).json({ success: false, message: 'Erro ao gravar a nova senha.' });
         return;
       }
 
-      if (!updateData || updateData.length === 0) {
-        res.status(409).json({
-          success: false,
-          message: 'A senha foi alterada simultaneamente em outra sessão. Atualize a página e tente novamente.'
-        });
+      if (!result.data || result.data.length !== 1) {
+        res.status(409).json({ success: false, message: 'A senha foi alterada em outra sessão. Entre novamente.' });
         return;
       }
 
+      await audit(client, { action: 'troca_senha', actorId: verifiedUserId, targetId: verifiedUserId, email: user.email, ip: getClientIp(req) });
+
+      // Novo token (emitido após password_changed_at) mantém esta sessão ativa
       res.json({
         success: true,
-        message: 'Senha alterada com sucesso com criptografia de alta segurança!'
+        message: 'Senha alterada com sucesso.',
+        token: generateSessionToken(verifiedUserId)
       });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: 'Erro interno ao alterar senha.', details: err?.message });
+      console.error('[CHANGE PASSWORD ERROR]', err?.message);
+      res.status(500).json({ success: false, message: 'Erro interno ao alterar senha.' });
     }
   }
 }
-
